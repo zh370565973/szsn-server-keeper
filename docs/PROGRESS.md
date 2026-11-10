@@ -1,6 +1,6 @@
 # 进度
 
-阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M3-01 至 M3-05 已完成（假分配器、分块限速、EXTRA_BYTES / SYSTEM_PERCENT、暂停清引用、联合失败回收）。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
+阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M3-01 至 M3-05 已完成；M3-06 假分配器覆盖 AT-05 至 AT-08，有限容量真实分配仍待获准环境。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
 
 ## 已完成
 
@@ -173,6 +173,21 @@ CPU 引擎复用已有 `CpuDutyCalculator`（含安全归零、禁止增长、�
 
 - `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。121 个测试，0 失败。其中 `CombinedLoadStarterTest` 6 个（双引擎成功、内存冲突回收、CPU 许可失效回收、超预算两侧不启动、落库 FAILED、SYSTEM_PERCENT 冲突回收），`CpuControlServiceTest` 增补 COMBINED 超预算 422 与受理成功。
 
+## M3-06 AT-05 至 AT-08
+
+新增 `M3AcceptanceTest`，假分配器与可注入时钟覆盖：
+
+- AT-05：预算充足时按 4MiB 块 / 32MiB/s 达到 256MiB `heldBytes`；`memoryLoadView` 分开展示 heldBytes / heapUsedBytes / rssBytes
+- AT-06：负值、溢出、互斥字段、超预算全部 `TARGET_INVALID` / `MEMORY_BUDGET_EXCEEDED`，持有量与两侧引擎无副作用
+- AT-07：SYSTEM_PERCENT 达预算后标 `TARGET_LIMITED`，持续 tick 不突破任务硬限
+- AT-08：暂停使 CPU duty=0 且 heldBytes=0、槽位保留；恢复重检失败保持 PAUSED；恢复后不瞬间满负载；FINITE 时限含暂停、不延长到期点
+
+仍不分配真实 `byte[]`。有限容量真实分配：目标环境待验收。
+
+2026-11-10，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。126 个测试，0 失败。其中 `M3AcceptanceTest` 5 个全部通过。
+
 ## 下一阶段
 
-M3-06：AT-05 至 AT-08（假分配器边界；获准环境再做有限真实分配）。M2-09 / AT-03 仅在获准测试环境执行。
+M3-07：资源页内存和联合标签可用。M3-06 真实有限容量分配与 M2-09 / AT-03 仅在获准测试环境执行。

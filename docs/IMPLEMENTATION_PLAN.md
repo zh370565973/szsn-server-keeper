@@ -21,6 +21,7 @@ PRD 是需求基线。M0 与 M1 已完成。M2-01 至 M2-08 已在开发侧交�
 - M3-03 `MemoryEngine` + `SystemPercentPlanner`：EXTRA_BYTES / SYSTEM_PERCENT；TARGET_LIMITED；高于目标不分配；释放后 10s 冷却；MEMORY HTTP 仍 503。
 - M3-04 暂停/停止清负载引用：2 秒内 heldBytes=0；页面分开展示 heldBytes / heapUsed / rssBytes；MEMORY HTTP 仍 503。
 - M3-05 `CombinedLoadStarter`：联合启动失败回收两侧并写 FAILED；COMBINED HTTP 已开放；MEMORY 单独仍 503。
+- M3-06 `M3AcceptanceTest`：假分配器覆盖 AT-05 至 AT-08；有限容量真实分配目标环境待验收。
 - 前端构建进入 `src/main/resources/static`，再打进同一个 JAR。
 
 ## 需求对应
@@ -40,4 +41,4 @@ PRD 是需求基线。M0 与 M1 已完成。M2-01 至 M2-08 已在开发侧交�
 
 ## 下一阶段入口
 
-M3-05 已完成。下一步是 M3-06：AT-05 至 AT-08。真实压力（AT-03 / M2-09）只在获准环境执行。
+M3-06 假分配器验收已完成（待真实分配）。下一步是 M3-07：资源页内存和联合标签。真实压力（AT-03 / M2-09、M3-06 真实分配）只在获准环境执行。
