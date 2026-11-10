@@ -1,0 +1,11 @@
+target/
+data/
+*.mv.db
+*.trace.db
+*.log
+frontend/node_modules/
+frontend/dist/
+src/main/resources/static/*
+!src/main/resources/static/.gitkeep
+.idea/
+*.iml

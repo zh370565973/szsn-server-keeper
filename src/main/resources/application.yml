@@ -1,0 +1,39 @@
+server:
+  address: 127.0.0.1
+  port: 8080
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        name: SRM_SESSION
+        http-only: true
+        same-site: strict
+
+spring:
+  application:
+    name: server-resource-manager
+  datasource:
+    url: jdbc:h2:file:${srm.data-dir}/srm;DB_CLOSE_ON_EXIT=FALSE;AUTO_SERVER=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 1
+      pool-name: srm-h2
+  h2:
+    console:
+      enabled: false
+  jackson:
+    default-property-inclusion: non_null
+  main:
+    banner-mode: off
+
+srm:
+  timezone: Asia/Shanghai
+  data-dir: ./data
+  admin:
+    username: admin
+    password-file: ${srm.data-dir}/admin.password
+  remote:
+    cidr: ""

@@ -1,0 +1,306 @@
+openapi: 3.0.3
+info:
+  title: Server Resource Manager API
+  version: 1.0.0-M1
+  description: |
+    M1 实现认证、只读监控和历史聚合。负载、计划与急停锁存写入在后续阶段。
+    控制类写接口当前返回 503 / CONTROL_UNAVAILABLE，且不产生负载。
+servers:
+  - url: /api/v1
+paths:
+  /auth/csrf:
+    get:
+      x-phase: M1
+      summary: 获取 CSRF 令牌
+      security: []
+      responses:
+        "200": { description: 令牌 }
+  /auth/login:
+    post:
+      x-phase: M1
+      summary: 登录
+      responses:
+        "200": { description: 已登录 }
+        "401": { description: 口令错误 }
+        "403": { description: CSRF 失败 }
+        "429": { description: 登录冷却 }
+        "503": { description: 口令未初始化或日志不可写 }
+  /auth/logout:
+    post:
+      x-phase: M1
+      summary: 注销并关闭该会话的 SSE
+      responses:
+        "200": { description: 已注销 }
+  /auth/me:
+    get:
+      x-phase: M1
+      summary: 当前会话
+      responses:
+        "200": { description: 用户名 }
+        "401": { description: 未登录 }
+  /system/info:
+    get:
+      x-phase: M1
+      summary: 环境、能力与禁用原因
+      responses:
+        "200": { description: 环境诊断 }
+  /monitor/current:
+    get:
+      x-phase: M1
+      summary: 最新快照
+      responses:
+        "200": { description: 快照，含 sequence、observedAt、ageMs、quality }
+        "503": { description: 尚无快照 }
+  /monitor/stream:
+    get:
+      x-phase: M1
+      summary: SSE，事件 metric、resource、safety、heartbeat
+      responses:
+        "200": { description: text/event-stream，id 为 bootId:sequence }
+        "401": { description: 未登录 }
+        "429": { description: 连接超过 5 }
+  /monitor/history:
+    get:
+      x-phase: M1
+      summary: 历史聚合，超过 2000 桶时自动加粗
+      parameters:
+        - in: query
+          name: from
+          schema: { type: integer, format: int64 }
+          required: true
+        - in: query
+          name: to
+          schema: { type: integer, format: int64 }
+          required: true
+        - in: query
+          name: bucketSeconds
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: 桶列表 }
+  /resource/status:
+    get:
+      x-phase: M1
+      summary: 开关、锁存和当前实例
+      responses:
+        "200": { description: M1 开关恒为 OFF，无活动实例 }
+  /resource/preflight:
+    post:
+      x-phase: M2
+      summary: 预检
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /executions:
+    get:
+      x-phase: M1
+      summary: 执行记录分页，M1 为空
+      responses:
+        "200": { description: 空页 }
+    post:
+      x-phase: M2
+      summary: 手动启动
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema: { type: string, format: uuid }
+          required: true
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE，不分配资源 }
+  /executions/{id}:
+    get:
+      x-phase: M4
+      summary: 执行详情
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "404": { description: M1 没有执行实例 }
+  /executions/{id}/targets:
+    patch:
+      x-phase: M2
+      summary: 更新目标
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /executions/{id}/pause:
+    post:
+      x-phase: M2
+      summary: 暂停
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /executions/{id}/resume:
+    post:
+      x-phase: M2
+      summary: 恢复
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /executions/{id}/stop:
+    post:
+      x-phase: M2
+      summary: 普通停止
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /resource/emergency-stop:
+    post:
+      x-phase: M2
+      summary: 急停锁存
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /resource/reset-latch:
+    post:
+      x-phase: M2
+      summary: 解除锁存
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /resource/control-switch:
+    put:
+      x-phase: M2
+      summary: 控制开关
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /tasks:
+    get:
+      x-phase: M1
+      summary: 模板列表，M1 为空
+      responses:
+        "200": { description: 空页 }
+    post:
+      x-phase: M4
+      summary: 创建模板
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /tasks/{id}:
+    get:
+      x-phase: M4
+      summary: 模板详情
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "404": { description: 不存在 }
+    put:
+      x-phase: M4
+      summary: 修改模板
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+    delete:
+      x-phase: M4
+      summary: 软删除模板
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /tasks/{id}/run:
+    post:
+      x-phase: M4
+      summary: 按模板运行
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /schedules:
+    get:
+      x-phase: M1
+      summary: 计划列表，M1 为空
+      responses:
+        "200": { description: 空页 }
+    post:
+      x-phase: M4
+      summary: 创建计划
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /schedules/{id}:
+    get:
+      x-phase: M4
+      summary: 计划详情
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "404": { description: 不存在 }
+    put:
+      x-phase: M4
+      summary: 修改计划
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+    delete:
+      x-phase: M4
+      summary: 删除计划
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /schedules/{id}/enabled:
+    put:
+      x-phase: M4
+      summary: 启停计划
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "503": { description: CONTROL_UNAVAILABLE }
+  /settings:
+    get:
+      x-phase: M1
+      summary: 可见配置，不返回秘密
+      responses:
+        "200": { description: 只读设置 }
+  /logs:
+    get:
+      x-phase: M1
+      summary: 操作日志分页
+      responses:
+        "200": { description: 登录等操作日志 }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: SRM_SESSION
+security:
+  - sessionCookie: []
