@@ -18,7 +18,7 @@ public class ControlAvailability {
 
     public List<String> reasons() {
         List<String> reasons = new ArrayList<>();
-        reasons.add("M1 未安装负载引擎");
+        reasons.add("负载控制入口尚未开放");
         EnvironmentReport report = collectorLoop.environment();
         reasons.addAll(report.controlDisabledReasons());
         if (!storageHealth.healthy() && storageHealth.fault() != null) {

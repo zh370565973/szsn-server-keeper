@@ -18,6 +18,13 @@ public final class CpuDutyCalculator {
     private boolean externalLoadHigh;
 
     public DutyStep step(double rawCpuPct, double targetPct, boolean safetyZero) {
+        return step(rawCpuPct, targetPct, safetyZero, false);
+    }
+
+    /**
+     * @param forbidGrowth 为 true 时只允许下降或保持，不抬高 duty；安全归零仍立即生效
+     */
+    public DutyStep step(double rawCpuPct, double targetPct, boolean safetyZero, boolean forbidGrowth) {
         if (Double.isNaN(rawCpuPct) || Double.isInfinite(rawCpuPct) || Double.isNaN(targetPct) || Double.isInfinite(targetPct)) {
             throw new IllegalArgumentException("CPU 百分比不能是 NaN 或无穷");
         }
@@ -57,12 +64,19 @@ public final class CpuDutyCalculator {
         } else if (delta < -MAX_DECREASE) {
             delta = -MAX_DECREASE;
         }
+        if (forbidGrowth && delta > 0) {
+            delta = 0;
+        }
         duty = Units.clampDouble(duty + delta, 0, 1);
         return new DutyStep(duty, ewma, false, false, false);
     }
 
     public double duty() {
         return duty;
+    }
+
+    public double ewma() {
+        return ewma;
     }
 
     public record DutyStep(double duty, double ewma, boolean hold, boolean externalLoadHigh, boolean safetyZeroed) {

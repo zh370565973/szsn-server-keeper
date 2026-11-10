@@ -109,7 +109,7 @@ public class CollectorLoop implements SmartLifecycle {
             ControlState control = controlSwitch.state();
             SafetySignal safety = safetyLoop.current();
             List<String> reasons = new ArrayList<>();
-            reasons.add("M1 未安装负载引擎");
+            reasons.add("负载控制入口尚未开放");
             reasons.addAll(report.controlDisabledReasons());
             if (!storageHealth.healthy() && storageHealth.fault() != null) {
                 reasons.add(storageHealth.fault());
