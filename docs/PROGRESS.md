@@ -156,6 +156,15 @@ CPU 引擎复用已有 `CpuDutyCalculator`（含安全归零、禁止增长、�
 
 - `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。110 个测试，0 失败。其中 `SystemPercentPlannerTest` 6 个、`MemoryEngineTest` 6 个，覆盖死区、系统已高于目标不分配、TARGET_LIMITED、冷却、EXTRA_BYTES 超预算 422。
 
+## M3-04 暂停和停止清除负载引用
+
+`MemoryEngine.pause()` / `stopAndClear()` 在正常调度下于 2 秒内 `allocator.clear()` 并使 `heldBytes=0`，暂停保留会话槽位；恢复经 `ResumeGate` 重检后从零再增长。CPU 编排的暂停/停止路径调用 `clearLoadReferences()`，不把 RSS 下降当作成功，也不调用 `System.gc()`。`/resource/status` 增加 `memory`（heldBytes / heapUsedBytes / rssBytes）；资源页分开展示「负载持有」「JVM 堆使用」「进程驻留内存」。MEMORY HTTP 启动仍 503（留给 M3-07）。
+
+2026-11-10，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。113 个测试，0 失败。其中 `MemoryEngineTest` 9 个（新增暂停清引用保留槽位、恢复重检后再增长、停止 2 秒内 heldBytes=0）。
+- `npm run build`（frontend）：成功。资源页与总览 JVM 卡文案对齐三项口径。
+
 ## 下一阶段
 
-M3-04：暂停和停止清除负载引用。M2-09 / AT-03 仅在获准测试环境、基线 CPU 低于 10% 时执行。
+M3-05：联合控制失败回收。M2-09 / AT-03 仅在获准测试环境、基线 CPU 低于 10% 时执行。

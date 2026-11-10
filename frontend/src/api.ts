@@ -129,6 +129,15 @@ export interface CpuStatusView {
   limitedReasons?: string[]
 }
 
+export interface MemoryLoadView {
+  heldBytes: number
+  heapUsedBytes?: number | null
+  rssBytes?: number | null
+  paused?: boolean
+  memoryMode?: string | null
+  limitedReasons?: string[]
+}
+
 export interface ResourceStatus {
   controlSwitch: string
   emergencyLatched: boolean
@@ -153,6 +162,12 @@ export interface ResourceStatus {
   controlDisabledReasons: string[]
   loadEngine: string
   cpu?: CpuStatusView
+  memory?: MemoryLoadView
+  budget?: {
+    heldBytes?: number
+    additionalBytes?: number
+    limitingFactors?: string[]
+  }
 }
 
 export interface HistoryPoint {

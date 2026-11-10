@@ -5,18 +5,21 @@ import com.szsn.srm.safety.SafetySignal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.springframework.http.HttpStatus;
 
 /**
  * 内存负载引擎：EXTRA_BYTES 固定持有目标；SYSTEM_PERCENT 每拍按系统占用调节。
- * 使用假分配器与 {@link ChunkedMemoryGrower}，不分配真实 {@code byte[]}，不打开 HTTP 启动入口。
- * 暂停/停止清引用留给后续任务。
+ * 使用假分配器与 {@link ChunkedMemoryGrower}，不分配真实 {@code byte[]}。
+ * 暂停与停止在正常调度下于 {@link #CLEAR_TIMEOUT_MS} 内清除负载引用并使 heldBytes=0。
  */
 public final class MemoryEngine {
     public static final long CONTROL_PERIOD_MS = 2_000L;
     public static final long REGROW_COOLDOWN_MS = 10_000L;
+    public static final long CLEAR_TIMEOUT_MS = 2_000L;
     public static final String MODE_EXTRA_BYTES = "EXTRA_BYTES";
     public static final String MODE_SYSTEM_PERCENT = "SYSTEM_PERCENT";
 
@@ -72,6 +75,7 @@ public final class MemoryEngine {
         }
         try {
             sessions.markRunning(claim.executionId());
+            reportHeld(claim.executionId(), allocator.heldBytes());
         } catch (RuntimeException exception) {
             state.compareAndSet(created, null);
             throw exception;
@@ -91,6 +95,7 @@ public final class MemoryEngine {
         }
         try {
             sessions.markRunning(claim.executionId());
+            reportHeld(claim.executionId(), allocator.heldBytes());
         } catch (RuntimeException exception) {
             state.compareAndSet(created, null);
             throw exception;
@@ -99,7 +104,85 @@ public final class MemoryEngine {
     }
 
     /**
-     * 推进一拍。EXTRA_BYTES 向目标增长；SYSTEM_PERCENT 按规划增减。
+     * RUNNING → PAUSING → PAUSED。清除全部负载引用，heldBytes 归零，保留槽位与许可。
+     */
+    public MemoryEngineView pause() {
+        State current = requireActive();
+        String executionId = current.claim.executionId();
+        sessions.beginPause(executionId);
+        current.paused.set(true);
+        clearHeld(executionId);
+        sessions.completePause(executionId);
+        return current.view(allocator.heldBytes(), systemUsedBytes(samples.sample()), systemUsedPct(samples.sample()), false);
+    }
+
+    /**
+     * 仅清除负载引用并标记内部暂停，不推进会话状态机。供 CPU/联合编排在已迁状态后调用。
+     */
+    public void clearLoadReferences() {
+        State current = state.get();
+        if (current != null) {
+            current.paused.set(true);
+            clearHeld(current.claim.executionId());
+            return;
+        }
+        allocator.clear();
+    }
+
+    /**
+     * 恢复须重新预检。失败保持 PAUSED；通过后从 heldBytes=0 再渐进增长。
+     */
+    public MemoryEngineView resume(ResumeGate gate) {
+        State current = requireActive();
+        String executionId = current.claim.executionId();
+        ResumeGate check = gate == null ? ResumeGate.OPEN : gate;
+        try {
+            check.admit();
+        } catch (RuntimeException exception) {
+            sessions.rejectResume(executionId);
+            throw exception;
+        }
+        sessions.acceptResume(executionId);
+        current.paused.set(false);
+        current.lastReleaseAtMs = null;
+        sessions.markRunning(executionId);
+        reportHeld(executionId, allocator.heldBytes());
+        return current.view(allocator.heldBytes(), systemUsedBytes(samples.sample()), systemUsedPct(samples.sample()), false);
+    }
+
+    /**
+     * 停止路径：清除引用、确认 Worker 退出许可。正常调度下应在 {@link #CLEAR_TIMEOUT_MS} 内 heldBytes=0。
+     *
+     * @return true 表示时限内 heldBytes 已归零
+     */
+    public boolean stopAndClear(long timeoutMs) throws InterruptedException {
+        State current = state.get();
+        String executionId = current == null ? null : current.claim.executionId();
+        if (current != null) {
+            current.paused.set(true);
+        }
+        clearHeld(executionId);
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0, timeoutMs));
+        while (allocator.heldBytes() != 0) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                break;
+            }
+            TimeUnit.NANOSECONDS.sleep(Math.min(remaining, TimeUnit.MILLISECONDS.toNanos(5)));
+            clearHeld(executionId);
+        }
+        boolean zero = allocator.heldBytes() == 0;
+        if (current != null && state.compareAndSet(current, null)) {
+            current.claim.permit().acknowledgeExit();
+            sessions.confirmWorkerExit(current.claim.permit());
+        } else if (current == null && zero) {
+            // 无活动状态时仍保证分配器为空
+        }
+        return zero;
+    }
+
+    /**
+     * 推进一拍。EXTRA_BYTES 向目标增长；SYSTEM_PERCENT 按规划增减。暂停中不增长。
      */
     public MemoryEngineView controlTick() {
         State current = state.get();
@@ -108,8 +191,13 @@ public final class MemoryEngine {
         }
         WorkerPermit permit = current.claim.permit();
         if (!permit.valid()) {
+            clearHeld(current.claim.executionId());
             state.compareAndSet(current, null);
             return idleView();
+        }
+        if (current.paused.get()) {
+            MemorySample sample = samples.sample();
+            return current.view(allocator.heldBytes(), systemUsedBytes(sample), systemUsedPct(sample), false);
         }
 
         SafetySignal signal = safety.get();
@@ -137,13 +225,20 @@ public final class MemoryEngine {
                 cooldownActive(current));
     }
 
+    public long heldBytes() {
+        return allocator.heldBytes();
+    }
+
     /**
-     * 测试或后续停止路径：使当前状态失效。不在此任务清 heldBytes。
+     * 使当前状态失效并清除负载引用。
      */
     public void detach() {
         State current = state.getAndSet(null);
         if (current != null) {
+            clearHeld(current.claim.executionId());
             current.claim.permit().acknowledgeExit();
+        } else {
+            allocator.clear();
         }
     }
 
@@ -162,9 +257,11 @@ public final class MemoryEngine {
         long held = allocator.heldBytes();
         if (held == current.targetBytes) {
             current.setLimited(List.of(), false, false);
+            reportHeld(current.claim.executionId(), held);
             return current.view(held, systemUsed, systemPct, false);
         }
         ChunkedMemoryGrower.GrowResult result = grower.growToward(current.targetBytes, permit);
+        reportHeld(current.claim.executionId(), result.heldBytes());
         if (result.reason() == ChunkedMemoryGrower.StopReason.BUDGET_EXHAUSTED) {
             reasons.add(SystemPercentPlanner.TARGET_LIMITED);
             if (result.detail() != null) {
@@ -180,6 +277,7 @@ public final class MemoryEngine {
             current.setLimited(List.of(), false, false);
         }
         if (!permit.valid()) {
+            clearHeld(current.claim.executionId());
             state.compareAndSet(current, null);
         }
         return current.view(allocator.heldBytes(), systemUsed, systemPct, false);
@@ -224,6 +322,7 @@ public final class MemoryEngine {
         if (decision.action() == SystemPercentPlanner.Action.RELEASE) {
             long before = allocator.heldBytes();
             long after = allocator.release(decision.amountBytes());
+            reportHeld(current.claim.executionId(), after);
             if (after < before) {
                 current.lastReleaseAtMs = clock.millis();
             }
@@ -234,6 +333,7 @@ public final class MemoryEngine {
         if (decision.action() == SystemPercentPlanner.Action.GROW) {
             long targetHeld = allocator.heldBytes() + decision.amountBytes();
             ChunkedMemoryGrower.GrowResult result = grower.growToward(targetHeld, permit);
+            reportHeld(current.claim.executionId(), result.heldBytes());
             boolean limited = decision.targetLimited()
                     || result.reason() == ChunkedMemoryGrower.StopReason.BUDGET_EXHAUSTED;
             List<String> reasons = new ArrayList<>(decision.reasons());
@@ -248,6 +348,7 @@ public final class MemoryEngine {
             }
             current.setLimited(reasons, false, limited);
             if (!permit.valid()) {
+                clearHeld(current.claim.executionId());
                 state.compareAndSet(current, null);
             }
             return current.view(allocator.heldBytes(), systemUsed, systemPct, cooldownActive(current));
@@ -255,6 +356,34 @@ public final class MemoryEngine {
 
         current.setLimited(decision.reasons(), decision.systemAboveTarget(), decision.targetLimited());
         return current.view(allocator.heldBytes(), systemUsed, systemPct, cooling);
+    }
+
+    private void clearHeld(String executionId) {
+        allocator.clear();
+        if (executionId != null) {
+            reportHeld(executionId, 0L);
+        }
+    }
+
+    private void reportHeld(String executionId, long heldBytes) {
+        try {
+            sessions.observeHeldBytes(executionId, heldBytes);
+        } catch (SessionRejectedException ignored) {
+            // 会话已终态或不匹配时忽略上报
+        } catch (RuntimeException ignored) {
+            // 停止路径不能因上报失败留下引用
+        }
+    }
+
+    private State requireActive() {
+        State current = state.get();
+        if (current == null) {
+            throw new SessionRejectedException(SessionRejectedException.Reason.NOT_ACTIVE, "内存引擎没有活动会话");
+        }
+        if (!current.claim.permit().valid()) {
+            throw new SessionRejectedException(SessionRejectedException.Reason.EMERGENCY_PREEMPTED, "许可已失效");
+        }
+        return current;
     }
 
     private boolean cooldownActive(State current) {
@@ -296,7 +425,7 @@ public final class MemoryEngine {
 
     private static MemoryEngineView idleView() {
         return new MemoryEngineView(
-                null, false, null, null, null, 0L, null, null, false, false, false, List.of());
+                null, false, false, null, null, null, 0L, null, null, false, false, false, List.of());
     }
 
     private static final class State {
@@ -304,6 +433,7 @@ public final class MemoryEngine {
         private final String mode;
         private final long targetBytes;
         private final double targetPct;
+        private final AtomicBoolean paused = new AtomicBoolean();
         private volatile Long lastReleaseAtMs;
         private volatile List<String> limitedReasons = List.of();
         private volatile boolean systemAboveTarget;
@@ -334,6 +464,7 @@ public final class MemoryEngine {
             return new MemoryEngineView(
                     claim.executionId(),
                     true,
+                    paused.get(),
                     mode,
                     MODE_EXTRA_BYTES.equals(mode) ? targetBytes : null,
                     MODE_SYSTEM_PERCENT.equals(mode) ? targetPct : null,

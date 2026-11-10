@@ -214,7 +214,7 @@ class CpuControlServiceTest {
             return latest == null ? null : latest.cpu().overallBusyPct();
         }, safety::current, (nanos, permit, allowed) -> 1L);
         FakeMemoryAllocator memory = new FakeMemoryAllocator();
-        MemoryBudgetGate budgetGate = new MemoryBudgetGate(memory, () -> {
+        MemorySampleSource samples = () -> {
             MetricSnapshot latest = store.latest();
             if (latest == null || latest.memory() == null || latest.jvm() == null) {
                 return null;
@@ -223,10 +223,17 @@ class CpuControlServiceTest {
                     latest.memory().totalBytes(),
                     latest.memory().availableBytes(),
                     latest.jvm().heapMaxBytes(),
-                    latest.jvm().heapUsedBytes());
-        }, com.szsn.srm.common.Units.DEFAULT_TASK_CAP);
+                    latest.jvm().heapUsedBytes(),
+                    Math.max(0, clock.millis() - latest.observedAt()));
+        };
+        MemoryBudgetGate budgetGate = new MemoryBudgetGate(memory, samples, com.szsn.srm.common.Units.DEFAULT_TASK_CAP);
+        ChunkedMemoryGrower grower = new ChunkedMemoryGrower(
+                memory, budgetGate, samples, () -> false, System::nanoTime, nanos -> {
+                }, held -> {
+                });
+        MemoryEngine memoryEngine = new MemoryEngine(sessions, memory, budgetGate, samples, grower, safety::current, clock::millis);
         CpuControlService createdService = new CpuControlService(availability, controlSwitch, sessions, starts, created,
-                budgetGate, store, safety, storage, clock);
+                memoryEngine, budgetGate, store, safety, storage, clock);
         return new Harness(createdService, created, sessions, store, clock, controlSwitch, memory);
     }
 

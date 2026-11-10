@@ -40,6 +40,7 @@ public class ResourceStatusController {
         body.put("controlCapable", capable);
         body.put("controlDisabledReasons", List.copyOf(reasons));
         body.put("budget", cpuControl.memoryBudgetView());
+        body.put("memory", cpuControl.memoryLoadView());
         body.put("loadEngine", "CPU");
         body.put("cpu", cpuControl.cpuStatus());
         Map<String, Object> active = enrichActive(body.get("activeExecution"), cpuControl.cpuStatus());

@@ -102,7 +102,7 @@ watch(() => monitor.snapshot?.sequence, render)
         <div>接口 {{ snapshot?.network.interfaces?.length ?? 0 }} 个，已排除回环与桥接重复项</div>
       </a-card>
       <a-card title="JVM" size="small">
-        <div class="value">堆 {{ formatBytes(snapshot?.jvm.heapUsedBytes) }}</div>
+        <div class="value">JVM 堆使用 {{ formatBytes(snapshot?.jvm.heapUsedBytes) }}</div>
         <div>进程驻留内存 {{ formatBytes(snapshot?.jvm.rssBytes) }}</div>
         <div>进程 CPU {{ formatPercent(snapshot?.jvm.processCpuPct) }}</div>
         <div>线程 {{ snapshot?.jvm.threadCount ?? '无数据' }}，GC {{ snapshot?.jvm.gcCount ?? '无数据' }} 次</div>

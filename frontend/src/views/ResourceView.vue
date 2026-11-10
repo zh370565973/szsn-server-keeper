@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { ApiError, api, type ResourceStatus } from '../api'
-import { formatPercent } from '../format'
+import { formatBytes, formatPercent } from '../format'
 import { monitor, refreshResource } from '../monitor'
 
 const status = ref<ResourceStatus>()
@@ -17,7 +17,9 @@ let timer: number | undefined
 const reasons = computed(() => status.value?.controlDisabledReasons ?? [])
 const reasonText = computed(() => reasons.value.join('；') || '负载控制不可用')
 const cpu = computed(() => status.value?.cpu)
+const memory = computed(() => status.value?.memory)
 const active = computed(() => status.value?.activeExecution)
+const snapshot = computed(() => monitor.snapshot)
 const capable = computed(() => !!status.value?.controlCapable)
 const switchOn = computed(() => status.value?.controlSwitch === 'ON')
 const latched = computed(() => !!status.value?.emergencyLatched)
@@ -267,7 +269,9 @@ function describe(caught: unknown) {
               <a-radio value="SYSTEM_PERCENT">系统占用比例</a-radio>
             </a-radio-group>
           </a-form-item>
-          <p>页面会同时展示负载持有、JVM 堆使用、进程驻留内存。停止只表示负载引用已释放，系统内存回收由 JVM 和操作系统决定。</p>
+          <p>
+            暂停或停止会在 2 秒内清除负载引用并使负载持有归零。这不代表进程驻留内存已下降，系统回收由 JVM 和操作系统决定。
+          </p>
         </a-form>
       </a-tab-pane>
       <a-tab-pane key="combined" tab="联合">
@@ -313,7 +317,23 @@ function describe(caught: unknown) {
       </a-descriptions-item>
       <a-descriptions-item label="受限原因">{{ limitedText }}</a-descriptions-item>
       <a-descriptions-item label="配置版本">{{ cpu?.configVersion ?? '—' }}</a-descriptions-item>
+      <a-descriptions-item label="负载持有">
+        {{ formatBytes(memory?.heldBytes ?? active?.heldBytes ?? 0) }}
+      </a-descriptions-item>
+      <a-descriptions-item label="JVM 堆使用">
+        {{ formatBytes(memory?.heapUsedBytes ?? snapshot?.jvm.heapUsedBytes) }}
+      </a-descriptions-item>
+      <a-descriptions-item label="进程驻留内存">
+        {{ formatBytes(memory?.rssBytes ?? snapshot?.jvm.rssBytes) }}
+      </a-descriptions-item>
     </a-descriptions>
+    <a-alert
+      type="info"
+      show-icon
+      style="margin-top: 12px"
+      message="停止后内存说明"
+      description="负载引用已释放，系统内存回收由 JVM/OS 决定。负载持有、JVM 堆使用与进程驻留内存口径不同，请分开解读。"
+    />
   </div>
 </template>
 

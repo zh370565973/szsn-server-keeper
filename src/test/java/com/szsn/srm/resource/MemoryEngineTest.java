@@ -136,6 +136,75 @@ class MemoryEngineTest {
         assertTrue(allocator.heldBytes() > afterRelease);
     }
 
+    @Test
+    void pauseClearsHeldBytesWithinTwoSecondsAndKeepsSlot() {
+        Harness harness = harness(ample(8L * Units.GIB, 6L * Units.GIB));
+        SessionClaim claim = sessions.claim("mem-pause");
+        long target = 32L * Units.MIB;
+        engine.startExtraBytes(claim, target);
+        engine.controlTick();
+        assertEquals(target, allocator.heldBytes());
+        assertEquals(target, sessions.active().orElseThrow().heldBytes());
+
+        long startedAt = System.nanoTime();
+        MemoryEngineView paused = engine.pause();
+        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
+        assertTrue(elapsedMs <= MemoryEngine.CLEAR_TIMEOUT_MS);
+        assertTrue(paused.paused());
+        assertEquals(0L, paused.heldBytes());
+        assertEquals(0L, allocator.heldBytes());
+        assertEquals(ExecutionStatus.PAUSED, sessions.active().orElseThrow().status());
+        assertEquals(0L, sessions.active().orElseThrow().heldBytes());
+
+        engine.controlTick();
+        assertEquals(0L, allocator.heldBytes());
+        assertTrue(sessions.active().isPresent());
+    }
+
+    @Test
+    void resumeRePrechecksThenMayGrowAgainFromZero() {
+        Harness harness = harness(ample(8L * Units.GIB, 6L * Units.GIB));
+        SessionClaim claim = sessions.claim("mem-resume");
+        long target = 16L * Units.MIB;
+        engine.startExtraBytes(claim, target);
+        engine.controlTick();
+        engine.pause();
+        assertEquals(0L, allocator.heldBytes());
+
+        assertThrows(ApiException.class, () -> engine.resume(() -> {
+            throw new ApiException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                    "CONTROL_UNAVAILABLE", "恢复预检失败");
+        }));
+        assertEquals(ExecutionStatus.PAUSED, sessions.active().orElseThrow().status());
+        assertEquals(0L, allocator.heldBytes());
+
+        MemoryEngineView resumed = engine.resume(ResumeGate.OPEN);
+        assertFalse(resumed.paused());
+        assertEquals(ExecutionStatus.RUNNING, sessions.active().orElseThrow().status());
+        MemoryEngineView after = engine.controlTick();
+        assertEquals(target, after.heldBytes());
+    }
+
+    @Test
+    void stopAndClearZerosHeldWithinTwoSeconds() throws Exception {
+        Harness harness = harness(ample(8L * Units.GIB, 6L * Units.GIB));
+        SessionClaim claim = sessions.claim("mem-stop");
+        long target = 24L * Units.MIB;
+        engine.startExtraBytes(claim, target);
+        engine.controlTick();
+        assertEquals(target, allocator.heldBytes());
+
+        sessions.requestStop("mem-stop", StopKind.USER);
+        long startedAt = System.nanoTime();
+        assertTrue(engine.stopAndClear(MemoryEngine.CLEAR_TIMEOUT_MS));
+        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L;
+        assertTrue(elapsedMs <= MemoryEngine.CLEAR_TIMEOUT_MS);
+        assertEquals(0L, allocator.heldBytes());
+        assertFalse(engine.view().running());
+        assertEquals(0L, sessions.lastFinished().orElseThrow().heldBytes());
+        assertEquals(ExecutionStatus.STOPPED, sessions.lastFinished().orElseThrow().status());
+    }
+
     private Harness harness(MemorySample sample) {
         return harness(new AtomicReference<>(sample), new AtomicLong());
     }

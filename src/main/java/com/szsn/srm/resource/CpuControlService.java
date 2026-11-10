@@ -28,6 +28,7 @@ import org.springframework.stereotype.Service;
 /**
  * CPU 控制编排。成功响应只反映已受理的会话状态，不假定 duty 已调到目标。
  * MEMORY EXTRA_BYTES 超预算先返回 422 且不分配；双模式引擎已实现，但 HTTP 启动仍返回 503。
+ * 暂停/停止会清除内存负载引用（heldBytes→0），不调用 {@code System.gc()}，不把 RSS 下降当作成功。
  * 本类不分配真实 {@code byte[]}。
  */
 @Service
@@ -44,6 +45,7 @@ public class CpuControlService implements DisposableBean {
     private final ResourceLoadManager sessions;
     private final ExecutionStartService starts;
     private final CpuEngine engine;
+    private final MemoryEngine memoryEngine;
     private final MemoryBudgetGate memoryBudget;
     private final SnapshotStore snapshots;
     private final SafetyLoop safetyLoop;
@@ -58,13 +60,14 @@ public class CpuControlService implements DisposableBean {
 
     public CpuControlService(ControlAvailability availability, ControlSwitch controlSwitch,
                              ResourceLoadManager sessions, ExecutionStartService starts, CpuEngine engine,
-                             MemoryBudgetGate memoryBudget, SnapshotStore snapshots, SafetyLoop safetyLoop,
-                             StorageHealth storageHealth, Clock clock) {
+                             MemoryEngine memoryEngine, MemoryBudgetGate memoryBudget, SnapshotStore snapshots,
+                             SafetyLoop safetyLoop, StorageHealth storageHealth, Clock clock) {
         this.availability = availability;
         this.controlSwitch = controlSwitch;
         this.sessions = sessions;
         this.starts = starts;
         this.engine = engine;
+        this.memoryEngine = memoryEngine;
         this.memoryBudget = memoryBudget;
         this.snapshots = snapshots;
         this.safetyLoop = safetyLoop;
@@ -139,6 +142,7 @@ public class CpuControlService implements DisposableBean {
     public Map<String, Object> pause(String executionId) {
         requireActive(executionId);
         CpuEngineView view = engine.pause();
+        memoryEngine.clearLoadReferences();
         return executionAccepted(executionId, sessions.active().map(session -> session.status().name()).orElse("PAUSED"),
                 view.configVersion(), false);
     }
@@ -219,6 +223,23 @@ public class CpuControlService implements DisposableBean {
 
     public Map<String, Object> memoryBudgetView() {
         return memoryBudget.budgetView();
+    }
+
+    /**
+     * 页面分开展示：负载持有、JVM 堆使用、进程驻留内存。
+     */
+    public Map<String, Object> memoryLoadView() {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("heldBytes", memoryEngine.heldBytes());
+        MetricSnapshot raw = snapshots.latest();
+        MetricSnapshot.JvmView jvm = raw == null ? null : raw.jvm();
+        view.put("heapUsedBytes", jvm == null ? null : jvm.heapUsedBytes());
+        view.put("rssBytes", jvm == null ? null : jvm.rssBytes());
+        MemoryEngineView engineView = memoryEngine.view();
+        view.put("paused", engineView.paused());
+        view.put("memoryMode", engineView.memoryMode());
+        view.put("limitedReasons", engineView.limitedReasons());
+        return view;
     }
 
     @Override
@@ -376,6 +397,7 @@ public class CpuControlService implements DisposableBean {
         scheduler.execute(() -> {
             try {
                 engine.awaitStop(CpuEngine.STOP_TIMEOUT_MS);
+                memoryEngine.clearLoadReferences();
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
             } catch (RuntimeException ignored) {
