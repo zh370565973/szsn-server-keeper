@@ -44,14 +44,14 @@ public class SystemController {
         body.put("jdkVersion", report.jdkVersion());
         body.put("memTotalBytes", report.memTotalBytes());
         body.put("cgroupVersion", report.cgroupVersion());
-        body.put("controlCapable", false);
+        body.put("controlCapable", availability.controlCapable());
         body.put("controlDisabledReasons", availability.reasons());
         body.put("dataDiskFreeBytes", report.dataDiskFreeBytes());
         body.put("dataDiskFreeRatio", report.dataDiskFreeRatio());
         body.put("storageHealthy", storageHealth.healthy());
         body.put("storageFault", storageHealth.fault());
-        body.put("phase", "M1");
-        body.put("loadEngine", "NOT_INSTALLED");
+        body.put("phase", "M2");
+        body.put("loadEngine", "CPU");
         body.put("acceptance", "开发验证通过，目标环境待验收");
         return Bodies.ok(body);
     }

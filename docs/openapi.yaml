@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
   title: Server Resource Manager API
-  version: 1.0.0-M1
+  version: 1.0.0-M2
   description: |
-    M1 实现认证、只读监控和历史聚合。M2-03 实现控制开关、急停锁存和人工解除。
-    开关每次进程启动都是 OFF。其余控制类写接口仍返回 503 / CONTROL_UNAVAILABLE，且不产生负载。
+    M2 已开放 CPU 控制写接口（启动/暂停/恢复/停止/改目标），成功返回 202 且不假定引擎已调到目标。
+    开关每次进程启动都是 OFF。内存与联合控制、模板与计划写接口仍返回 503 / CONTROL_UNAVAILABLE。
 servers:
   - url: /api/v1
 paths:
@@ -80,15 +80,15 @@ paths:
   /resource/status:
     get:
       x-phase: M2
-      summary: 开关、锁存、健康窗口和当前实例
+      summary: 开关、锁存、健康窗口、当前实例和 CPU 目标/实际/duty/Worker/受限原因
       responses:
-        "200": { description: 开关每次启动为 OFF；急停后 emergencyLatched 为 true }
+        "200": { description: loadEngine=CPU；成功字段不假定引擎已调到目标 }
   /resource/preflight:
     post:
       x-phase: M2
-      summary: 预检
+      summary: CPU 预检，无副作用；内存/联合仍不可用
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: ok/reasons/workerCount；不预留资源 }
   /executions:
     get:
       x-phase: M1
@@ -97,14 +97,15 @@ paths:
         "200": { description: 空页 }
     post:
       x-phase: M2
-      summary: 手动启动
+      summary: 手动启动 CPU；内存/联合返回 503
       parameters:
         - in: header
           name: Idempotency-Key
           schema: { type: string, format: uuid }
           required: true
       responses:
-        "503": { description: CONTROL_UNAVAILABLE，不分配资源 }
+        "202": { description: 已受理，status 多为 STARTING，engineCompleted=false }
+        "503": { description: CONTROL_UNAVAILABLE，环境不可控或非 CPU 模式 }
   /executions/{id}:
     get:
       x-phase: M4
@@ -119,13 +120,14 @@ paths:
   /executions/{id}/targets:
     patch:
       x-phase: M2
-      summary: 更新目标
+      summary: 更新 CPU 目标
       parameters:
         - in: path
           name: id
           required: true
           schema: { type: string }
       responses:
+        "202": { description: 已受理，不假定 duty 已完成调节 }
         "503": { description: CONTROL_UNAVAILABLE }
   /executions/{id}/pause:
     post:
@@ -137,6 +139,7 @@ paths:
           required: true
           schema: { type: string }
       responses:
+        "202": { description: 已受理 }
         "503": { description: CONTROL_UNAVAILABLE }
   /executions/{id}/resume:
     post:
@@ -148,6 +151,7 @@ paths:
           required: true
           schema: { type: string }
       responses:
+        "202": { description: 已受理 }
         "503": { description: CONTROL_UNAVAILABLE }
   /executions/{id}/stop:
     post:
@@ -159,6 +163,7 @@ paths:
           required: true
           schema: { type: string }
       responses:
+        "202": { description: 已受理 STOPPING，不假定 Worker 已退出 }
         "503": { description: CONTROL_UNAVAILABLE }
   /resource/emergency-stop:
     post:

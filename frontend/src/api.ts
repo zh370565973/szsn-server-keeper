@@ -116,6 +116,19 @@ export interface SystemInfo {
   acceptance: string
 }
 
+export interface CpuStatusView {
+  targetPct?: number | null
+  actualPct?: number | null
+  duty?: number | null
+  workerCount?: number | null
+  ewma?: number | null
+  configVersion?: number | null
+  externalLoadHigh?: boolean
+  safetyZeroed?: boolean
+  stopTimeout?: boolean
+  limitedReasons?: string[]
+}
+
 export interface ResourceStatus {
   controlSwitch: string
   emergencyLatched: boolean
@@ -125,10 +138,21 @@ export interface ResourceStatus {
   healthReasons?: string[]
   latchResetReady?: boolean
   storageHealthy?: boolean
-  activeExecution?: { executionId: string; status: string; heldBytes: number } | null
+  activeExecution?: {
+    executionId: string
+    status: string
+    heldBytes: number
+    targetPct?: number | null
+    actualPct?: number | null
+    duty?: number | null
+    workerCount?: number | null
+    limitedReasons?: string[]
+    configVersion?: number | null
+  } | null
   controlCapable: boolean
   controlDisabledReasons: string[]
   loadEngine: string
+  cpu?: CpuStatusView
 }
 
 export interface HistoryPoint {

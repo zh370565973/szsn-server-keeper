@@ -109,7 +109,6 @@ public class CollectorLoop implements SmartLifecycle {
             ControlState control = controlSwitch.state();
             SafetySignal safety = safetyLoop.current();
             List<String> reasons = new ArrayList<>();
-            reasons.add("负载控制入口尚未开放");
             reasons.addAll(report.controlDisabledReasons());
             if (!storageHealth.healthy() && storageHealth.fault() != null) {
                 reasons.add(storageHealth.fault());
@@ -120,9 +119,10 @@ public class CollectorLoop implements SmartLifecycle {
             if ("OFF".equals(control.controlSwitch())) {
                 reasons.add("控制开关已关闭");
             }
+            boolean capable = report.controlCapable() && storageHealth.healthy();
             hub.publish(new SseHub.LiveFrame(
                     snapshot,
-                    new SseHub.ResourcePulse(control.controlSwitch(), control.emergencyLatched(), false, List.copyOf(reasons)),
+                    new SseHub.ResourcePulse(control.controlSwitch(), control.emergencyLatched(), capable, List.copyOf(reasons)),
                     toPulse(snapshot, safety)));
         } catch (Throwable throwable) {
             log.warn("采集周期失败");

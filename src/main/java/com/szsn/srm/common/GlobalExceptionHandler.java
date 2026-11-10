@@ -1,5 +1,6 @@
 package com.szsn.srm.common;
 
+import com.szsn.srm.resource.SessionRejectedException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import java.util.LinkedHashMap;
@@ -16,6 +17,11 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ApiException.class)
     public ResponseEntity<ApiBody<Void>> api(ApiException exception) {
         return body(exception.status(), exception.code(), exception.getMessage(), exception.details());
+    }
+
+    @ExceptionHandler(SessionRejectedException.class)
+    public ResponseEntity<ApiBody<Void>> session(SessionRejectedException exception) {
+        return body(HttpStatus.CONFLICT, exception.reason().name(), exception.getMessage(), Map.of());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

@@ -77,11 +77,12 @@ function connect() {
       emergencyLatched: pulse.emergencyLatched ?? current?.emergencyLatched ?? false,
       controlCapable: pulse.controlCapable ?? current?.controlCapable ?? false,
       controlDisabledReasons: pulse.controlDisabledReasons ?? current?.controlDisabledReasons ?? [],
-      loadEngine: current?.loadEngine ?? 'NOT_INSTALLED',
+      loadEngine: current?.loadEngine ?? 'CPU',
       latchReason: current?.latchReason,
       healthyForMs: current?.healthyForMs,
       latchResetReady: current?.latchResetReady,
-      activeExecution: current?.activeExecution
+      activeExecution: current?.activeExecution,
+      cpu: current?.cpu
     }
   })
   source.onerror = () => {
