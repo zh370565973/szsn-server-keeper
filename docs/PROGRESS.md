@@ -47,4 +47,19 @@ H2 对 `(SCHEDULE_ID, SCHEDULED_AT)` 的唯一索引允许多个全空组合，�
 
 ## 下一阶段
 
-M2：实现会话状态机的运行时、独立安全检查、generation 取消、急停锁存，然后接入 CPU 引擎。先用可注入时钟和采集器测试，不在开发机上做真实满载。
+M2-02：启动前落库和幂等键。先提交 STARTING 与配置快照，再启动；24 小时内相同 Idempotency-Key 返回同一 executionId。
+
+## M2-01 运行时会话槽位
+
+可观察行为：同一时刻只有一个 STARTING、RUNNING、PAUSING、PAUSED 或 STOPPING 实例。暂停仍然占用槽位，第二个启动被拒绝。普通变更进入 `ResourceLoadManager` 的串行队列。急停只停止当前 generation 并发布下一个，不获取这把锁，也不写数据库；旧 Worker 的 `claim` 立即失败。新实例要等旧 Worker 确认退出且持有字节归零后才能启动。本条只做内存记账，没有分配 `byte[]`，也没有启动 CPU 计算。控制写接口仍返回 503。
+
+代码：`ResourceLoadManager`、`SessionGeneration`、`LoadWorker`、`LoadAdmission`、`ActiveSession`。测试：`SessionSlotTest`。
+
+### 验证命令
+
+2026-11-10，工作目录为仓库根目录。编译目标为 Java 17，本机运行时是 JDK 21。
+
+- `mvn -Dskip.frontend=true test`：31 个测试，0 失败，0 错误，0 跳过。BUILD SUCCESS。其中 `SessionSlotTest` 10 个，覆盖单槽位、暂停占槽、持有字节未归零时拒绝下一次启动、急停在普通队列被数据库占位阻塞时 500 毫秒内返回且提交计数仍为 0、并发启动只接纳一个、急停与启动竞态后旧 generation 不能再记账。
+- 同一命令里的 `ApiIntegrationTest` 仍通过：控制写接口返回 503，`TASK_EXECUTION` 行数不变。
+
+未实现：启动落库、幂等键、急停锁存持久化、独立安全线程、CPU 引擎。真实 CPU 压力不在本条。
