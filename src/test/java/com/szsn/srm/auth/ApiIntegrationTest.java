@@ -200,6 +200,80 @@ class ApiIntegrationTest {
         assertEquals(executions, jdbc.queryForObject("SELECT COUNT(*) FROM TASK_EXECUTION", Long.class));
     }
 
+    @Test
+    void taskTemplateSurvivesEditAndReferencedDeleteWhileScheduleWritesStayClosed() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/tasks"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
+        MvcResult csrf = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/auth/csrf"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andReturn();
+        String token = objectMapper.readTree(csrf.getResponse().getContentAsString()).path("data").path("token").asText();
+        var cookie = csrf.getResponse().getCookie("XSRF-TOKEN");
+        assertNotNull(cookie);
+        MockHttpSession active = (MockHttpSession) loginAgain(cookie, token).getRequest().getSession(false);
+        long executions = jdbc.queryForObject("SELECT COUNT(*) FROM TASK_EXECUTION", Long.class);
+
+        MvcResult created = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/tasks")
+                        .session(active)
+                        .cookie(cookie)
+                        .header("X-XSRF-TOKEN", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"接口模板\",\"resourceMode\":\"CPU\",\"cpuTargetPct\":30,\"runMode\":\"FINITE\",\"durationSeconds\":60}"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andReturn();
+        String taskId = objectMapper.readTree(created.getResponse().getContentAsString()).path("data").path("id").asText();
+        String snapshot = "{\"cpuTargetPct\":30}";
+        jdbc.update("""
+                INSERT INTO TASK_EXECUTION (ID, TASK_ID, CONFIG_SNAPSHOT_JSON, STATUS, VERSION)
+                VALUES (?, ?, ?, 'RUNNING', 3)
+                """, java.util.UUID.randomUUID().toString(), taskId, snapshot);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/v1/tasks/" + taskId)
+                        .session(active)
+                        .cookie(cookie)
+                        .header("X-XSRF-TOKEN", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"已修改\",\"resourceMode\":\"CPU\",\"cpuTargetPct\":40,\"runMode\":\"FINITE\",\"durationSeconds\":60,\"expectedVersion\":1}"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data.version").value(2))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data.cpuTargetPct").value(40));
+        assertEquals(snapshot, jdbc.queryForObject(
+                "SELECT CONFIG_SNAPSHOT_JSON FROM TASK_EXECUTION WHERE TASK_ID = ?", String.class, taskId));
+        assertEquals(3L, jdbc.queryForObject(
+                "SELECT VERSION FROM TASK_EXECUTION WHERE TASK_ID = ?", Long.class, taskId));
+
+        jdbc.update("""
+                INSERT INTO TASK_SCHEDULE (
+                    ID, TASK_ID, TYPE, SCHEDULE_JSON, TIMEZONE, ENABLED, VERSION, CREATED_AT, UPDATED_AT
+                ) VALUES (?, ?, 'ONCE', '{}', 'Asia/Shanghai', TRUE, 1, 1, 1)
+                """, "sched-it-" + taskId.substring(0, 8), taskId);
+        MvcResult conflict = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete("/api/v1/tasks/" + taskId)
+                        .session(active)
+                        .cookie(cookie)
+                        .header("X-XSRF-TOKEN", token))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+                .andReturn();
+        assertEquals("TEMPLATE_REFERENCED", objectMapper.readTree(conflict.getResponse().getContentAsString()).path("error").path("code").asText());
+        assertEquals(snapshot, jdbc.queryForObject(
+                "SELECT CONFIG_SNAPSHOT_JSON FROM TASK_EXECUTION WHERE TASK_ID = ?", String.class, taskId));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/tasks/" + taskId + "/run")
+                        .session(active)
+                        .cookie(cookie)
+                        .header("X-XSRF-TOKEN", token)
+                        .header("Idempotency-Key", java.util.UUID.randomUUID().toString()))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isServiceUnavailable());
+        assertEquals(executions + 1, jdbc.queryForObject("SELECT COUNT(*) FROM TASK_EXECUTION", Long.class));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/schedules")
+                        .session(active)
+                        .cookie(cookie)
+                        .header("X-XSRF-TOKEN", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isServiceUnavailable());
+    }
+
     private MvcResult loginAgain(jakarta.servlet.http.Cookie cookie, String token) throws Exception {
         return mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/auth/login")
                         .cookie(cookie)

@@ -22,6 +22,16 @@ public class OperationLogRepository {
                 """, UUID.randomUUID().toString(), actor, sourceIp, action, result, reason, requestId, System.currentTimeMillis());
     }
 
+    public void insertChange(String actor, String sourceIp, String action, String beforeJson, String afterJson,
+                             String result, String reason, String requestId, long createdAt) {
+        jdbc.update("""
+                INSERT INTO OPERATION_LOG
+                (ID, ACTOR, SOURCE_IP, ACTION, BEFORE_JSON, AFTER_JSON, RESULT, REASON, REQUEST_ID, CREATED_AT)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, UUID.randomUUID().toString(), actor, sourceIp, action, beforeJson, afterJson, result, reason,
+                requestId, createdAt);
+    }
+
     public PageResult<LogRow> page(int page, int pageSize) {
         Long total = jdbc.queryForObject("SELECT COUNT(*) FROM OPERATION_LOG", Long.class);
         List<LogRow> items = jdbc.query("""

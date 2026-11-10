@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * M4 模板与计划写接口仍不可用。CPU 控制已由 {@link CpuControlController} 接管。
+ * 定时计划写接口仍不可用。任务模板由 {@code TaskTemplateController} 接管，CPU 控制由 {@link CpuControlController} 接管。
  */
 @RestController
 @RequestMapping("/api/v1")
@@ -24,26 +24,6 @@ public class UnavailableControlController {
 
     public UnavailableControlController(ControlAvailability availability) {
         this.availability = availability;
-    }
-
-    @PostMapping("/tasks")
-    public ApiBody<Void> createTask() {
-        return reject();
-    }
-
-    @PutMapping("/tasks/{id}")
-    public ApiBody<Void> updateTask(@PathVariable String id) {
-        return reject();
-    }
-
-    @DeleteMapping("/tasks/{id}")
-    public ApiBody<Void> deleteTask(@PathVariable String id) {
-        return reject();
-    }
-
-    @PostMapping("/tasks/{id}/run")
-    public ApiBody<Void> runTask(@PathVariable String id) {
-        return reject();
     }
 
     @PostMapping("/schedules")
@@ -68,7 +48,7 @@ public class UnavailableControlController {
 
     private ApiBody<Void> reject() {
         List<String> reasons = new ArrayList<>(availability.reasons());
-        reasons.add("模板与计划入口尚未开放");
+        reasons.add("定时计划入口尚未开放");
         throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "CONTROL_UNAVAILABLE", "负载控制不可用",
                 Map.of("reasons", List.copyOf(reasons)));
     }

@@ -202,57 +202,84 @@ paths:
         "409": { description: CONTROL_LATCHED，开启被拒绝 }
   /tasks:
     get:
-      x-phase: M1
-      summary: 模板列表，M1 为空
+      x-phase: M4
+      summary: 模板列表，不含已软删除；q 按名称包含匹配
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 100 }
       responses:
-        "200": { description: 空页 }
+        "200": { description: 分页模板 }
     post:
       x-phase: M4
-      summary: 创建模板
+      summary: 创建模板。PUT 为整份替换，创建时不能带 expectedVersion
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: 新模板，version 为 1 }
+        "400": { description: 请求格式不合法 }
+        "422": { description: TARGET_INVALID，模式字段互斥或目标越界 }
   /tasks/{id}:
     get:
       x-phase: M4
-      summary: 模板详情
+      summary: 模板详情。已软删除视为不存在
       parameters:
         - in: path
           name: id
           required: true
           schema: { type: string }
       responses:
+        "200": { description: 模板 }
         "404": { description: 不存在 }
     put:
       x-phase: M4
-      summary: 修改模板
+      summary: 修改模板。必须带 expectedVersion；不改写已有执行实例
       parameters:
         - in: path
           name: id
           required: true
           schema: { type: string }
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: 更新后的模板 }
+        "400": { description: 缺少 expectedVersion 或格式不合法 }
+        "404": { description: 不存在 }
+        "409": { description: VERSION_CONFLICT }
+        "422": { description: TARGET_INVALID }
     delete:
       x-phase: M4
-      summary: 软删除模板
+      summary: 软删除模板。被计划引用时 409 并列出计划
       parameters:
         - in: path
           name: id
           required: true
           schema: { type: string }
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: 已软删除，历史执行快照保留 }
+        "404": { description: 不存在 }
+        "409": { description: TEMPLATE_REFERENCED，details.schedules 列出引用计划 }
   /tasks/{id}/run:
     post:
       x-phase: M4
-      summary: 按模板运行
+      summary: 按当前模板创建实例。成功响应不假定引擎已完成；环境不可控时 503 且不落库
       parameters:
         - in: path
           name: id
           required: true
           schema: { type: string }
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, format: uuid }
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "202": { description: 已受理，engineCompleted 为 false }
+        "400": { description: 缺少幂等键 }
+        "404": { description: 模板不存在 }
+        "422": { description: 目标或预算不合法，无执行记录 }
+        "503": { description: CONTROL_UNAVAILABLE，无执行记录 }
   /schedules:
     get:
       x-phase: M1
