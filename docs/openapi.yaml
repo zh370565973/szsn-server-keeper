@@ -1,9 +1,10 @@
 openapi: 3.0.3
 info:
   title: Server Resource Manager API
-  version: 1.0.0-M2
+  version: 1.0.0-M1
   description: |
-    M3 已开放 CPU/MEMORY/COMBINED 控制写接口（启动/暂停/恢复/停止/改目标），成功返回 202 且不假定引擎已达目标。
+    与 Maven 制品版本一致，不另立发版号。接口面已包含 M3 的 CPU/MEMORY/COMBINED 控制写接口（启动/暂停/恢复/停止/改目标），成功返回 202 且不假定引擎已达目标。
+    公开启动在落库前校验：durationSeconds 为 10 秒–7 天，memoryTargetPct 为 1–70，memoryTargetBytes 必须是 4MiB 整数倍；不合法返回 422，不写 STARTING。
     开关每次进程启动都是 OFF。EXTRA_BYTES 超预算返回 422 并给出 maxAllowedBytes，不静默改小目标。模板/计划写接口仍返回 503 / CONTROL_UNAVAILABLE。
 servers:
   - url: /api/v1
@@ -105,7 +106,7 @@ paths:
           required: true
       responses:
         "202": { description: 已受理，status 多为 STARTING，engineCompleted=false }
-        "422": { description: MEMORY_BUDGET_EXCEEDED，requestedBytes/allowedAdditionalBytes/maxAllowedBytes/limitingFactors，无分配 }
+        "422": { description: TARGET_INVALID（时长、1–70 系统占用、4MiB 对齐）或 MEMORY_BUDGET_EXCEEDED；均在落库前拒绝，无分配 }
         "503": { description: CONTROL_UNAVAILABLE，环境不可控或开关/锁存未满足 }
   /executions/{id}:
     get:
@@ -121,7 +122,7 @@ paths:
   /executions/{id}/targets:
     patch:
       x-phase: M2
-      summary: 更新 CPU 目标
+      summary: 更新运行中的 CPU 或内存目标
       parameters:
         - in: path
           name: id

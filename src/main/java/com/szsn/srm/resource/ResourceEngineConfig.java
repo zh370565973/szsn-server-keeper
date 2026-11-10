@@ -28,7 +28,7 @@ public class ResourceEngineConfig {
 
     @Bean
     MemoryAllocator memoryAllocator() {
-        return new FakeMemoryAllocator();
+        return new ByteArrayMemoryAllocator();
     }
 
     @Bean

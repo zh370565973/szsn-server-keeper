@@ -15,7 +15,7 @@
     <artifactId>server-resource-manager</artifactId>
     <version>1.0.0-M1</version>
     <name>server-resource-manager</name>
-    <description>单机服务器资源监控与受控负载。本版本只交付只读监控。</description>
+    <description>单机服务器资源监控与受控负载。制品版本仍为 1.0.0-M1；当前包含监控以及 CPU/内存负载控制。</description>
 
     <properties>
         <java.version>17</java.version>

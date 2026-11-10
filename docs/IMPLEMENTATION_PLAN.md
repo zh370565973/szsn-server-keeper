@@ -1,6 +1,14 @@
 # 实施计划
 
-PRD 是需求基线。M0 与 M1 已完成。M2-01 至 M2-08 已在开发侧交付（含 AT-04/09/10/13/14 自动测试与资源页 CPU 标签）。结论保持为：开发验证通过，目标环境待验收。
+PRD 是需求基线。M0 到 M3 的开发项已在 main 上。M4 未开工。麒麟现场对照和长跑仍待验收。制品版本保持 `1.0.0-M1`。
+
+## 当前状态（2026-11-10 验收调整后）
+
+公开启动入口按 PRD 在落库前拒绝：`durationSeconds` 为 10 秒–7 天，`memoryTargetPct` 为 1–70，`memoryTargetBytes` 必须是 4MiB 整数倍。不合法返回 422，不写 STARTING。
+
+生产内存分配器是 `ByteArrayMemoryAllocator`：4MiB 分块、逐页写入非零字节、32MiB/s、三重预算；暂停/停止只丢引用，不调用 `System.gc()`。单元测试仍注入 `FakeMemoryAllocator`。生产 CPU 燃烧器是 `ChecksumCpuBurner`。CPU、内存和联合控制的 HTTP 在环境允许时返回 202，不再以 503 作为内存模式的占位。非 Linux、急停锁存或开关关闭时仍是 503 / `CONTROL_UNAVAILABLE`。模板和计划写接口仍是 503。
+
+M3-06 的假分配器边界测试已经在仓库里。2026-11-10 在这台 4 核普通 Linux 上以 64MiB 上限做了真实分配取证（见 `docs/PROGRESS.md`），因此 M3-06 改为已完成；这不是麒麟验收，也不是 AT-05 的 256MiB 全量。麒麟专项（M1-09 / AT-02、M5-04）保持待验收。M2-09 / AT-03 的 8 核、30/40/60% 五分钟观察未作为本次完成项。下一步不是 M3-07（该条已完成），也不领取 M4-01。
 
 ## 已锁定的选择
 
@@ -9,19 +17,19 @@ PRD 是需求基线。M0 与 M1 已完成。M2-01 至 M2-08 已在开发侧交�
 - 管理员用户名来自 `srm.admin.username`。口令只通过 `java -jar ... init-admin` 写入 BCrypt 文件。
 - Linux 使用 `/proc/stat` 与 `/proc/meminfo`。其他系统用 OSHI 的同类计数，CPU 公式相同。缺失字段保持缺失。
 - 内存预算、CPU duty、保护窗口和执行状态迁移是纯函数。M2-01 只增加运行时槽位和 generation，不启动 CPU Worker，也不分配负载 `byte[]`。
-- M2-02 的已获准启动先提交 STARTING 与配置快照，再调用启动动作。公开的执行启动接口仍返回 `503 / CONTROL_UNAVAILABLE`。
+- M2-02 的已获准启动先提交 STARTING 与配置快照，再调用启动动作。该条完成时公开启动仍返回 503；现已由控制服务在环境允许时受理。
 - M2-03 的控制开关只存在于内存，每次进程启动为 OFF。急停先失效 Worker，再持久化锁存；解除必须人工操作。
 - M2-04 的安全检查跑在独立的 `srm-safety` 线程，阈值窗口复用 `ProtectionEvaluator`；换页速率由相邻 Swap 样本推算，缺省不发明压力。
-- M2-05 的 CPU 引擎复用 `CpuDutyCalculator`；Worker 数截断到逻辑核心数；停止后 2 秒内确认退出。测试注入不自旋的燃烧器；公开启动接口仍返回 503。
-- M2-06 的暂停只停计算并保留槽位；恢复经 `ResumeGate` 重检；改目标带版本校验与变更记录。公开控制写接口仍返回 503。
+- M2-05 的 CPU 引擎复用 `CpuDutyCalculator`；Worker 数截断到逻辑核心数；停止后 2 秒内确认退出。测试注入不自旋的燃烧器。生产 Bean 是 `ChecksumCpuBurner`。该条完成时公开启动仍返回 503。
+- M2-06 的暂停只停计算并保留槽位；恢复经 `ResumeGate` 重检；改目标带版本校验与变更记录。该条完成时公开控制写接口仍返回 503。
 - M2-07 用可注入时钟/采集器覆盖 AT-04/09/10/13/14；不占满开发机，不分配内存。
-- M2-08 开放 CPU 写控制与资源页 CPU 标签；生命周期返回 202 且 `engineCompleted=false`；内存/联合仍 503。
-- M3-01 假分配器接入 `MemoryBudget`；EXTRA_BYTES 超预算 422 且无分配；预算内内存启动仍 503。
-- M3-02 `ChunkedMemoryGrower`：4 MiB 分块、逐块复核停止/预算/时效、32 MiB/s 限速；仍不分配真实 `byte[]`；MEMORY HTTP 仍 503。
-- M3-03 `MemoryEngine` + `SystemPercentPlanner`：EXTRA_BYTES / SYSTEM_PERCENT；TARGET_LIMITED；高于目标不分配；释放后 10s 冷却；MEMORY HTTP 仍 503。
-- M3-04 暂停/停止清负载引用：2 秒内 heldBytes=0；页面分开展示 heldBytes / heapUsed / rssBytes；MEMORY HTTP 仍 503。
-- M3-05 `CombinedLoadStarter`：联合启动失败回收两侧并写 FAILED；COMBINED HTTP 已开放；MEMORY 单独仍 503。
-- M3-06 `M3AcceptanceTest`：假分配器覆盖 AT-05 至 AT-08；有限容量真实分配目标环境待验收。
+- M2-08 开放 CPU 写控制与资源页 CPU 标签；生命周期返回 202 且 `engineCompleted=false`。该条完成时内存/联合仍 503，随后 M3 已开放。
+- M3-01 假分配器接入 `MemoryBudget`；EXTRA_BYTES 超预算 422 且无分配。该条完成时预算内内存启动仍 503。
+- M3-02 `ChunkedMemoryGrower`：4 MiB 分块、逐块复核停止/预算/时效、32 MiB/s 限速。生产分配改由 `ByteArrayMemoryAllocator` 触碰 `byte[]`；测试仍用假分配器。
+- M3-03 `MemoryEngine` + `SystemPercentPlanner`：EXTRA_BYTES / SYSTEM_PERCENT；TARGET_LIMITED；高于目标不分配；释放后 10s 冷却。
+- M3-04 暂停/停止清负载引用：2 秒内 heldBytes=0；页面分开展示 heldBytes / heapUsed / rssBytes。不把 RSS 下降当作成功。
+- M3-05 `CombinedLoadStarter`：联合启动失败回收两侧并写 FAILED。CPU、内存和联合 HTTP 均已开放。
+- M3-06 `M3AcceptanceTest`：假分配器覆盖 AT-05 至 AT-08。真实有限容量分配在普通 Linux 上取证，不改记成麒麟验收。
 - 前端构建进入 `src/main/resources/static`，再打进同一个 JAR。
 
 ## 需求对应
@@ -32,7 +40,7 @@ PRD 是需求基线。M0 与 M1 已完成。M2-01 至 M2-08 已在开发侧交�
 | RES-01 | M2-01 交付单活动槽位和 generation。急停不等待普通操作段 |
 | RES-02 | 启动落库、幂等键、CPU 预检已做。M3-01 固定容量超预算 422 |
 | RES-03 | M2-05/M2-06/M2-08 已交付 CPU 引擎、页面展示与 202 受理语义 |
-| RES-04 至 RES-06 | 预算、分块、双模式、暂停清引用与联合失败回收已在；MEMORY 单独 HTTP 与页面标签留给 M3-07 |
+| RES-04 至 RES-06 | 预算、分块、双模式、暂停清引用、联合失败回收、内存/联合页面已在。生产路径分配真实 `byte[]` |
 | SAFE-01 | 保护窗口纯函数、独立安全线程与 CPU 引擎已在 |
 | SAFE-02 | M2-03 交付内存开关、急停锁存、人工解除和页面急停入口 |
 | TASK-01 至 TASK-03 | 表已建；手动启动快照可落库；列表和写接口仍按后续任务保留 |
@@ -41,4 +49,4 @@ PRD 是需求基线。M0 与 M1 已完成。M2-01 至 M2-08 已在开发侧交�
 
 ## 下一阶段入口
 
-M3-06 假分配器验收已完成（待真实分配）。下一步是 M3-07：资源页内存和联合标签。真实压力（AT-03 / M2-09、M3-06 真实分配）只在获准环境执行。
+M3-07 已完成。M4 未开工，本轮不领取 M4-01。麒麟专项和 AT-03 五分钟曲线仍待后续获准环境，不在本次分支展开。

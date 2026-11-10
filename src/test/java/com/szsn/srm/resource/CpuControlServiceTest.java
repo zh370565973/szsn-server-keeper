@@ -27,6 +27,7 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -217,6 +218,57 @@ class CpuControlServiceTest {
     }
 
     @Test
+    void prdBoundsRejectBeforePersist() throws Exception {
+        Harness harness = harness(true);
+        engine = harness.engine;
+        service = harness.service;
+        harness.switchOn();
+        fillAmpleMemoryMonitor(harness.store, harness.clock, 12);
+        String[] rejected = {
+                "{\"resourceMode\":\"CPU\",\"cpuTargetPct\":30,\"runMode\":\"FINITE\",\"durationSeconds\":2}",
+                "{\"resourceMode\":\"CPU\",\"cpuTargetPct\":30,\"runMode\":\"FINITE\",\"durationSeconds\":604801}",
+                "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"SYSTEM_PERCENT\",\"memoryTargetPct\":0,\"runMode\":\"FINITE\",\"durationSeconds\":10}",
+                "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"SYSTEM_PERCENT\",\"memoryTargetPct\":70.5,\"runMode\":\"CONTINUOUS\"}",
+                "{\"resourceMode\":\"COMBINED\",\"cpuTargetPct\":30,\"memoryMode\":\"EXTRA_BYTES\",\"memoryTargetBytes\":5242880,\"runMode\":\"CONTINUOUS\"}"
+        };
+        for (String body : rejected) {
+            ApiException exception = assertThrows(ApiException.class,
+                    () -> harness.service.start(UUID.randomUUID().toString(), body));
+            assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, exception.status());
+            assertEquals("TARGET_INVALID", exception.code());
+        }
+        assertFalse(harness.sessions.active().isPresent());
+        assertEquals(0, harness.jdbc.queryForObject("SELECT COUNT(*) FROM TASK_EXECUTION", Integer.class));
+        assertNull(harness.engine.view().executionId());
+        assertNull(harness.memoryEngine.view().executionId());
+        assertEquals(0L, harness.memory.heldBytes());
+    }
+
+    @Test
+    void unalignedTargetUpdateDoesNotChangeStoredTarget() throws Exception {
+        Harness harness = harness(true);
+        engine = harness.engine;
+        memoryEngine = harness.memoryEngine;
+        service = harness.service;
+        harness.switchOn();
+        fillAmpleMemoryMonitor(harness.store, harness.clock, 12);
+        Map<String, Object> accepted = harness.service.start(UUID.randomUUID().toString(), """
+                {"resourceMode":"MEMORY","memoryMode":"EXTRA_BYTES","memoryTargetBytes":4194304,"runMode":"CONTINUOUS"}
+                """);
+        long before = harness.memoryEngine.view().memoryTargetBytes();
+        int rows = harness.jdbc.queryForObject("SELECT COUNT(*) FROM TASK_EXECUTION", Integer.class);
+        ApiException exception = assertThrows(ApiException.class,
+                () -> harness.service.updateTargets((String) accepted.get("executionId"),
+                        "{\"memoryTargetBytes\":5242880,\"expectedVersion\":"
+                                + harness.memoryEngine.view().configVersion() + "}"));
+        assertEquals("TARGET_INVALID", exception.code());
+        assertEquals(before, harness.memoryEngine.view().memoryTargetBytes());
+        assertEquals(rows, harness.jdbc.queryForObject("SELECT COUNT(*) FROM TASK_EXECUTION", Integer.class));
+        harness.sessions.requestStop((String) accepted.get("executionId"), StopKind.USER);
+        harness.memoryEngine.stopAndClear(MemoryEngine.CLEAR_TIMEOUT_MS, true);
+    }
+
+    @Test
     void incapableEnvironmentRejectsStart() throws Exception {
         Harness harness = harness(false);
         engine = harness.engine;
@@ -296,6 +348,7 @@ class CpuControlServiceTest {
                         List.of("当前系统不是 Linux，负载控制只允许在无额外配额的 Linux 虚拟机内启用"), 1L << 30, 0.5);
         ControlAvailability availability = new ControlAvailability(() -> report, storage);
         DataSource dataSource = memoryDb();
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
         ExecutionStartService starts = new ExecutionStartService(dataSource, new DataSourceTransactionManager(dataSource),
                 clock, controlSwitch);
         CpuEngine created = new CpuEngine(sessions, () -> {
@@ -323,7 +376,7 @@ class CpuControlServiceTest {
         MemoryEngine createdMemory = new MemoryEngine(sessions, memory, budgetGate, samples, grower, safety::current, clock::millis);
         CpuControlService createdService = new CpuControlService(availability, controlSwitch, sessions, starts, created,
                 createdMemory, budgetGate, store, safety, storage, clock);
-        return new Harness(createdService, created, createdMemory, sessions, store, clock, controlSwitch, memory);
+        return new Harness(createdService, created, createdMemory, sessions, store, clock, controlSwitch, memory, jdbc);
     }
 
     private static DataSource memoryDb() throws Exception {
@@ -338,7 +391,8 @@ class CpuControlServiceTest {
 
     private record Harness(CpuControlService service, CpuEngine engine, MemoryEngine memoryEngine,
                            ResourceLoadManager sessions, SnapshotStore store,
-                           MutableClock clock, ControlSwitch controlSwitch, FakeMemoryAllocator memory) {
+                           MutableClock clock, ControlSwitch controlSwitch, FakeMemoryAllocator memory,
+                           JdbcTemplate jdbc) {
         void switchOn() {
             controlSwitch.setEnabled(true, Operator.system());
         }

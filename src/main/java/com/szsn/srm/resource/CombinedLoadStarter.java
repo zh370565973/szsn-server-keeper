@@ -5,7 +5,7 @@ import java.util.Objects;
 /**
  * 联合控制启动：同一会话同时拉起 CPU 与内存引擎。
  * EXTRA_BYTES 超预算在启动任一引擎前拒绝；任一引擎启动失败时停止两侧并释放槽位，
- * 不允许静默退化为单项运行。本类不分配真实 {@code byte[]}；内存侧使用假分配器。
+ * 不允许静默退化为单项运行。内存是否触碰真实 {@code byte[]} 由注入的分配器决定。
  */
 public final class CombinedLoadStarter {
     private final ResourceLoadManager sessions;

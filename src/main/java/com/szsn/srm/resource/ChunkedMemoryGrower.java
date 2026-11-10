@@ -9,8 +9,9 @@ import java.util.function.BooleanSupplier;
 import java.util.function.LongConsumer;
 
 /**
- * 按 4 MiB 分块增长假持有量：每块分配前复核停止标志、最新预算和样本时效；
- * 增长速率不超过 32 MiB/s。不分配真实 {@code byte[]}。
+ * 按 4 MiB 分块把持有量调向目标：每块分配前复核停止标志、最新预算和样本时效；
+ * 增长速率不超过 32 MiB/s。本类只调用 {@link MemoryAllocator}；生产实现会触碰 {@code byte[]}，
+ * 测试可注入假分配器。若分配被并发清除拒绝，立即停止，避免空转补分配。
  */
 public final class ChunkedMemoryGrower {
     public static final long CHUNK_BYTES = Units.BLOCK;
@@ -51,7 +52,7 @@ public final class ChunkedMemoryGrower {
     }
 
     /**
-     * 把假持有量调到对齐后的目标。增大时逐块检查与限速；减少时立即释放多余块。
+     * 把持有量调到对齐后的目标。增大时逐块检查与限速；减少时立即释放多余块。
      */
     public GrowResult growToward(long targetBytes, WorkerPermit permit) {
         requireAligned(targetBytes);
@@ -123,8 +124,12 @@ public final class ChunkedMemoryGrower {
                 return result(grown, StopReason.COMPLETED, null);
             }
 
+            long before = allocator.heldBytes();
             long after = allocator.grow(CHUNK_BYTES);
             heldObserver.accept(after);
+            if (after < before + CHUNK_BYTES) {
+                return result(grown, StopReason.STOPPED, "ALLOCATOR_REJECTED");
+            }
             grown += CHUNK_BYTES;
             nextAllowedAt = nanos.nanoTime() + CHUNK_INTERVAL_NANOS;
         }

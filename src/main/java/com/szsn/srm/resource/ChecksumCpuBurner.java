@@ -3,8 +3,8 @@ package com.szsn.srm.resource;
 import java.util.function.BooleanSupplier;
 
 /**
- * 真实计算燃烧器：每段产生可观察校验值，避免被 JIT 消除；每不超过 5ms 检查许可与暂停。
- * 仅在获准环境由调用方显式使用；单元测试应注入不自旋的 {@link CpuBurner}。
+ * 生产 CPU 燃烧器：每段产生可观察校验值，避免被 JIT 消除；每不超过 5ms 检查许可与暂停。
+ * {@link ResourceEngineConfig} 默认注入本类。单元测试应另行注入不自旋的 {@link CpuBurner}。
  */
 public final class ChecksumCpuBurner implements CpuBurner {
     static final long CHECK_NANOS = 5_000_000L;

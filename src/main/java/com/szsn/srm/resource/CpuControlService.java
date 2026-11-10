@@ -3,6 +3,7 @@ package com.szsn.srm.resource;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.szsn.srm.common.ApiException;
+import com.szsn.srm.common.Units;
 import com.szsn.srm.monitor.MetricSnapshot;
 import com.szsn.srm.monitor.Quality;
 import com.szsn.srm.monitor.SnapshotStore;
@@ -28,8 +29,9 @@ import org.springframework.stereotype.Service;
 /**
  * CPU / 内存 / 联合控制编排。成功响应只反映已受理的会话状态，不假定引擎已达目标。
  * EXTRA_BYTES 超预算返回 422，不静默改小目标后启动；COMBINED 任一引擎失败时两侧都停止并写 FAILED。
+ * 时长、系统占用目标和内存字节对齐在调用启动落库之前校验，不合法直接 422。
  * 暂停/停止会清除内存负载引用（heldBytes→0），不调用 {@code System.gc()}，不把 RSS 下降当作成功。
- * 本类不分配真实 {@code byte[]}。
+ * 生产路径注入真实 {@code byte[]} 分配器；单元测试可换成假分配器。
  */
 @Service
 public class CpuControlService implements DisposableBean {
@@ -134,6 +136,7 @@ public class CpuControlService implements DisposableBean {
                 throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryMode 不合法");
             }
         }
+        Long durationSeconds = finiteDuration(preview);
         List<String> reasons = new ArrayList<>();
         collectStartReasons(reasons);
         if (!reasons.isEmpty()) {
@@ -141,7 +144,6 @@ public class CpuControlService implements DisposableBean {
         }
         EnvironmentReport env = availability.environment();
         int workers = CpuEngine.cappedWorkerCount(0, Math.max(1, env.logicalCpus()));
-        Long durationSeconds = finiteDuration(preview);
         final double resolvedCpu = cpuTarget == null ? 0D : cpuTarget;
         final String resolvedMemoryMode = memoryMode;
         final Long resolvedMemoryBytes = memoryTargetBytes;
@@ -604,18 +606,26 @@ public class CpuControlService implements DisposableBean {
             return null;
         }
         JsonNode value = node.get("durationSeconds");
-        if (value == null || !value.isNumber() || value.asLong() < 1) {
+        if (value == null || !value.isNumber() || !integral(value)) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "durationSeconds 不合法");
         }
-        return value.asLong();
+        long seconds = value.asLong();
+        if (seconds < LoadBounds.DURATION_MIN_SECONDS || seconds > LoadBounds.DURATION_MAX_SECONDS) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "durationSeconds 必须在 10 秒到 7 天之间");
+        }
+        return seconds;
     }
 
     private static long requireMemoryTargetBytes(JsonNode node) {
         JsonNode value = node.get("memoryTargetBytes");
-        if (value == null || !value.isNumber() || value.asLong() < 1) {
+        if (value == null || !value.isNumber() || !integral(value)) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetBytes 不合法");
         }
-        return value.asLong();
+        long bytes = value.asLong();
+        if (bytes < Units.BLOCK || bytes % Units.BLOCK != 0) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetBytes 必须是 4MiB 的整数倍");
+        }
+        return bytes;
     }
 
     private static double requireMemoryTargetPct(JsonNode node) {
@@ -624,9 +634,19 @@ public class CpuControlService implements DisposableBean {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetPct 不合法");
         }
         double target = value.asDouble();
-        if (Double.isNaN(target) || Double.isInfinite(target) || target < 0 || target > 100) {
-            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetPct 必须在 0 到 100 之间");
+        if (Double.isNaN(target) || Double.isInfinite(target)
+                || target < LoadBounds.MEMORY_TARGET_PCT_MIN
+                || target > LoadBounds.MEMORY_TARGET_PCT_MAX) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetPct 必须在 1 到 70 之间");
         }
         return target;
+    }
+
+    private static boolean integral(JsonNode value) {
+        if (!value.isNumber()) {
+            return false;
+        }
+        double raw = value.asDouble();
+        return !Double.isNaN(raw) && !Double.isInfinite(raw) && raw == Math.rint(raw) && value.canConvertToLong();
     }
 }

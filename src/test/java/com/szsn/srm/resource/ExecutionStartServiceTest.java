@@ -277,6 +277,47 @@ class ExecutionStartServiceTest {
         assertEquals(0, count(fixture.jdbc, "REQUEST_DEDUP"));
     }
 
+    @Test
+    void prdBoundsRejectBeforePersistAndEdgesPrepare() {
+        Fixture fixture = fixture();
+        AtomicInteger launches = new AtomicInteger();
+        WorkerLaunch launch = start -> launches.incrementAndGet();
+        String[] rejected = {
+                "{\"resourceMode\":\"CPU\",\"cpuTargetPct\":30,\"runMode\":\"FINITE\",\"durationSeconds\":9}",
+                "{\"resourceMode\":\"CPU\",\"cpuTargetPct\":30,\"runMode\":\"FINITE\",\"durationSeconds\":604801}",
+                "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"SYSTEM_PERCENT\",\"memoryTargetPct\":0,\"runMode\":\"CONTINUOUS\"}",
+                "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"SYSTEM_PERCENT\",\"memoryTargetPct\":71,\"runMode\":\"CONTINUOUS\"}",
+                "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"EXTRA_BYTES\",\"memoryTargetBytes\":1048576,\"runMode\":\"CONTINUOUS\"}",
+                "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"EXTRA_BYTES\",\"memoryTargetBytes\":4194305,\"runMode\":\"CONTINUOUS\"}"
+        };
+        for (String body : rejected) {
+            ApiException exception = assertThrows(ApiException.class,
+                    () -> fixture.service.start(key(), body, launch));
+            assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, exception.status());
+            assertEquals("TARGET_INVALID", exception.code());
+        }
+        assertEquals(0, launches.get());
+        assertEquals(0, count(fixture.jdbc, "TASK_EXECUTION"));
+        assertEquals(0, count(fixture.jdbc, "REQUEST_DEDUP"));
+
+        StartConfig.prepare(key(), """
+                {"resourceMode":"CPU","cpuTargetPct":30,"runMode":"FINITE","durationSeconds":10}
+                """);
+        StartConfig.prepare(key(), """
+                {"resourceMode":"CPU","cpuTargetPct":30,"runMode":"FINITE","durationSeconds":604800}
+                """);
+        StartConfig.prepare(key(), """
+                {"resourceMode":"MEMORY","memoryMode":"SYSTEM_PERCENT","memoryTargetPct":1,"runMode":"CONTINUOUS"}
+                """);
+        StartConfig.prepare(key(), """
+                {"resourceMode":"MEMORY","memoryMode":"SYSTEM_PERCENT","memoryTargetPct":70,"runMode":"CONTINUOUS"}
+                """);
+        StartConfig.prepare(key(), """
+                {"resourceMode":"MEMORY","memoryMode":"EXTRA_BYTES","memoryTargetBytes":4194304,"runMode":"CONTINUOUS"}
+                """);
+        assertEquals(0, count(fixture.jdbc, "TASK_EXECUTION"));
+    }
+
     private static String key() {
         return UUID.randomUUID().toString();
     }

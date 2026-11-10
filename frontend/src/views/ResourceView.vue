@@ -7,6 +7,8 @@ import { monitor, refreshResource } from '../monitor'
 
 const MIB = 1024 * 1024
 const BLOCK_MIB = 4
+const DURATION_MIN_SECONDS = 10
+const DURATION_MAX_SECONDS = 7 * 24 * 60 * 60
 
 const status = ref<ResourceStatus>()
 const error = ref('')
@@ -49,6 +51,20 @@ const overBudget = computed(
 const alignmentOk = computed(
   () => memoryMode.value !== 'EXTRA_BYTES' || Math.round(memoryTargetMib.value) % BLOCK_MIB === 0
 )
+const durationOk = computed(() => {
+  if (runMode.value !== 'FINITE') {
+    return true
+  }
+  return Number.isFinite(durationSeconds.value)
+    && durationSeconds.value >= DURATION_MIN_SECONDS
+    && durationSeconds.value <= DURATION_MAX_SECONDS
+})
+const memoryPctOk = computed(() => {
+  if (memoryMode.value !== 'SYSTEM_PERCENT' || tab.value === 'cpu') {
+    return true
+  }
+  return Number.isFinite(memoryTargetPct.value) && memoryTargetPct.value >= 1 && memoryTargetPct.value <= 70
+})
 
 const canStart = computed(() =>
   capable.value &&
@@ -56,7 +72,8 @@ const canStart = computed(() =>
   !latched.value &&
   !hasSession.value &&
   !busy.value &&
-  (tab.value === 'cpu' || (alignmentOk.value && !overBudget.value))
+  durationOk.value &&
+  (tab.value === 'cpu' || (alignmentOk.value && !overBudget.value && memoryPctOk.value))
 )
 const canPause = computed(() => hasSession.value && active.value?.status === 'RUNNING' && !busy.value)
 const canResume = computed(() => hasSession.value && active.value?.status === 'PAUSED' && !busy.value)
@@ -165,6 +182,14 @@ function buildBody(): Record<string, unknown> {
 }
 
 async function start() {
+  if (!durationOk.value) {
+    error.value = `时长必须在 ${DURATION_MIN_SECONDS} 秒到 7 天之间`
+    return
+  }
+  if (tab.value !== 'cpu' && !memoryPctOk.value) {
+    error.value = '系统占用目标必须在 1% 到 70% 之间'
+    return
+  }
   if (overBudget.value) {
     error.value = `固定容量超过当前预算。可输入最大值为 ${maxAllowedMib.value} MiB，请改小后再提交；不会静默改小后启动。`
     return
@@ -246,8 +271,16 @@ async function applyTarget() {
   if (!active.value || configVersion.value == null) {
     return
   }
+  if ((tab.value === 'memory' || tab.value === 'combined') && !memoryPctOk.value) {
+    error.value = '系统占用目标必须在 1% 到 70% 之间'
+    return
+  }
   if ((tab.value === 'memory' || tab.value === 'combined') && overBudget.value) {
     error.value = `固定容量超过当前预算。可输入最大值为 ${maxAllowedMib.value} MiB，禁止提交；不会静默改小。`
+    return
+  }
+  if ((tab.value === 'memory' || tab.value === 'combined') && !alignmentOk.value) {
+    error.value = `固定容量必须是 ${BLOCK_MIB} MiB 的整数倍`
     return
   }
   busy.value = true
@@ -361,11 +394,11 @@ function describe(caught: unknown) {
               <a-radio value="CONTINUOUS">持续</a-radio>
             </a-radio-group>
           </a-form-item>
-          <a-form-item v-if="runMode === 'FINITE'" label="时长（秒）">
+          <a-form-item v-if="runMode === 'FINITE'" label="时长（10 秒–7 天）">
             <a-input-number
               v-model:value="durationSeconds"
-              :min="1"
-              :max="86400"
+              :min="DURATION_MIN_SECONDS"
+              :max="DURATION_MAX_SECONDS"
               :disabled="busy || hasSession"
               style="width: 180px"
             />
@@ -419,11 +452,11 @@ function describe(caught: unknown) {
               <a-radio value="CONTINUOUS">持续</a-radio>
             </a-radio-group>
           </a-form-item>
-          <a-form-item v-if="runMode === 'FINITE'" label="时长（秒）">
+          <a-form-item v-if="runMode === 'FINITE'" label="时长（10 秒–7 天）">
             <a-input-number
               v-model:value="durationSeconds"
-              :min="1"
-              :max="86400"
+              :min="DURATION_MIN_SECONDS"
+              :max="DURATION_MAX_SECONDS"
               :disabled="busy || hasSession"
               style="width: 180px"
             />
@@ -474,11 +507,11 @@ function describe(caught: unknown) {
               <a-radio value="CONTINUOUS">持续</a-radio>
             </a-radio-group>
           </a-form-item>
-          <a-form-item v-if="runMode === 'FINITE'" label="时长（秒）">
+          <a-form-item v-if="runMode === 'FINITE'" label="时长（10 秒–7 天）">
             <a-input-number
               v-model:value="durationSeconds"
-              :min="1"
-              :max="86400"
+              :min="DURATION_MIN_SECONDS"
+              :max="DURATION_MAX_SECONDS"
               :disabled="busy || hasSession"
               style="width: 180px"
             />

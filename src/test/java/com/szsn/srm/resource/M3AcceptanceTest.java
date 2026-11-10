@@ -292,7 +292,7 @@ class M3AcceptanceTest {
         harness.switchOn();
         fillAmpleMonitor(harness.store, harness.clock, 12);
 
-        long durationSeconds = 2L;
+        long durationSeconds = LoadBounds.DURATION_MIN_SECONDS;
         long wallStart = System.nanoTime();
         Map<String, Object> started = harness.service.start(UUID.randomUUID().toString(), """
                 {"resourceMode":"COMBINED","cpuTargetPct":30,"memoryMode":"EXTRA_BYTES",\
@@ -306,7 +306,7 @@ class M3AcceptanceTest {
         long waitMs = durationSeconds * 1000L + 1_200L
                 - (System.nanoTime() - wallStart) / 1_000_000L;
         if (waitMs > 0) {
-            Thread.sleep(Math.min(waitMs, 5_000L));
+            Thread.sleep(Math.min(waitMs, 15_000L));
         }
         long deadline = System.currentTimeMillis() + 2_000L;
         while (System.currentTimeMillis() < deadline && harness.sessions.active().isPresent()) {

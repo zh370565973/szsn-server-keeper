@@ -1,6 +1,6 @@
 # 进度
 
-阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成。M3-01 至 M3-05、M3-07 已完成；M3-06 假分配器覆盖 AT-05 至 AT-08，有限容量真实分配仍待获准环境。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
+阶段结论：M0 与 M1 在 Windows 开发机上验证通过。M2-01 至 M2-08、M3-01 至 M3-05 与 M3-07 已在开发侧完成。生产路径现使用真实 `byte[]` 内存分配和 `ChecksumCpuBurner`。公开启动按 PRD 在落库前校验时长、系统占用和 4MiB 对齐。M4 未开工。麒麟现场对照（M1-09 / AT-02）和长跑（M5-04）仍待验收，本次不要求麒麟机器。M2-09 / AT-03 的 8 核五分钟曲线仍待验收。下文前半是各里程碑当时的记录，不以「未验证」一节里的旧句作为当前实现状态。
 
 ## 已完成
 
@@ -10,7 +10,7 @@
 | MON-02 | 快照带 sequence、observedAt、ageMs、quality、missingFields。超过 3 秒为 STALE，超过 10 秒为 UNAVAILABLE | `SnapshotQuality` |
 | MON-03 | 单采集线程每秒采样，SSE 只保留最新帧，15 秒心跳，最多 5 个连接。10 秒聚合写入 H2，查询最多 2000 桶 | `CollectorLoop`、`SseHub`、`HistoryService` |
 | SEC-01 | 登录、CSRF、30 分钟活动超时、5 次失败后冷却 5 分钟。SSE 不刷新活动时间。注销关闭该会话的 SSE | `AuthController`、`SecurityConfig` |
-| RES / SAFE | 预算、duty、保护窗口和状态迁移可单测。写控制接口返回 503，不写执行记录 | `MemoryBudget`、`CpuDutyCalculator`、`ProtectionEvaluator`、`UnavailableControlController` |
+| RES / SAFE | 预算、duty、保护窗口和状态迁移可单测。M1 当时写控制接口返回 503；现已由 CPU/内存控制服务受理，非 Linux 仍 503 | `MemoryBudget`、`CpuDutyCalculator`、`ProtectionEvaluator`、`CpuControlService` |
 | DEP-01 | `mvn package` 产出内嵌前端的可执行 JAR | `pom.xml`、`frontend/` |
 
 H2 对 `(SCHEDULE_ID, SCHEDULED_AT)` 的唯一索引允许多个全空组合，相同的非空计划触发会被拒绝。`SchemaMigrationTest` 固定了这个行为。
@@ -33,10 +33,13 @@ H2 对 `(SCHEDULE_ID, SCHEDULED_AT)` 的唯一索引允许多个全空组合，�
 
 ## 未验证
 
-- 银河麒麟 V10 SP3、真实 `/proc` 对照、cgroup 判定和 OSHI/JNA 在目标内核上的加载。
-- AT-03 至 AT-15、AT-17、AT-18、AT-20。负载引擎、计划调度和备份升级都未实现。急停锁存与独立安全线程已在开发侧完成，目标环境待验收。
+这一节在 M1 结束时写过「负载引擎未实现」。该句已过时：CPU 与内存引擎已在后续任务落地。当前仍未验证的是：
+
+- 银河麒麟 V10 SP3、与麒麟 `/proc` 的现场对照（M1-09 / AT-02）、以及 M5-04 长跑。用户同意本次不强制麒麟机，这些条目保持待验收。
+- M2-09 / AT-03：8 核、基线 CPU 低于 10% 时的 30/40/60% 五分钟观察。短时燃烧不能把该条改成已完成。
+- M4 模板、计划、心跳，以及 AT-11、AT-12、AT-15、AT-20。
 - 非回环 HTTPS 与 CIDR 只做了启动拒绝判断，没有证书环境。
-- 24 小时运行、磁盘满和数据库故障注入。
+- 24 小时运行、磁盘满和数据库故障注入。备份升级脚本仍未做。
 
 ## 已知限制
 
@@ -199,4 +202,24 @@ CPU 引擎复用已有 `CpuDutyCalculator`（含安全归零、禁止增长、�
 
 ## 下一阶段
 
-M4-01 依赖 M3-06（待验收）。M3-06 真实有限容量分配与 M2-09 / AT-03 仅在获准测试环境执行。
+M4 未开工，不领取 M4-01。M2-09 / AT-03 仍待 8 核环境下的 30/40/60% 五分钟观察。麒麟专项仍待验收。
+
+## 2026-11-10 验收调整
+
+用户同意本次不强制麒麟机。公开启动在落库前校验时长 10 秒–7 天、`memoryTargetPct` 1–70、内存字节 4MiB 对齐。生产分配器改为 `ByteArrayMemoryAllocator`，生产燃烧器确认为 `ChecksumCpuBurner`。单元测试仍注入假分配器和瞬时燃烧器。M4 未开始。
+
+工作目录 `/agent/repos/szsn-server-keeper`。JDK 17.0.21（`JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`）。
+
+- `mvn -B -Dskip.frontend=true test`：BUILD SUCCESS。134 个测试，0 失败，0 错误，0 跳过。其中 `ExecutionStartServiceTest` 11 个、`CpuControlServiceTest` 11 个，覆盖时长、系统占用和未对齐内存字节在落库前 422 且 `TASK_EXECUTION` 不增加；`ByteArrayMemoryAllocatorTest` 3 个，覆盖触碰页、清除引用，以及生产 Bean 是真实分配器和 `ChecksumCpuBurner`。`M3AcceptanceTest` 的到期用例改为 PRD 下限 10 秒。
+
+有限容量自测（不在默认测试集里，类 `LimitedRealLoadProbe`）。主机 4 核，`MemTotal` 16387328 kB，探测前 `MemAvailable` 约 5098216 kB。1 秒 `/proc/stat` 差值 `[user,nice,system,idle,iowait,irq,softirq,steal]=[0,0,0,399,0,0,0,0]`，忙占比 0.0%，低于 10%，但只有 4 核，不符合 AT-03 的 8 核和五分钟 30/40/60% 协议，因此没有强跑该曲线，M2-09 保持待验收。
+
+```text
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+mvn -q -Dskip.frontend=true -DincludeScope=test dependency:build-classpath -Dmdep.outputFile=/tmp/srm-cp.txt
+java -cp "target/classes:target/test-classes:$(cat /tmp/srm-cp.txt)" com.szsn.srm.resource.LimitedRealLoadProbe
+```
+
+结果：`PROBE_OK capBytes=67108864`。`ChunkedMemoryGrower` 加 `ByteArrayMemoryAllocator` 在 1905 ms 内达到 held=67108864（16 个 4MiB 块，页样本字节=1），与 32MiB/s 的块间隔相符。堆从探测前的 MXBean used=0 增到峰值 102682624；`VmRSS` 从 40872 kB 增到 111040 kB。`clear()` 后 held=0、块数=0，堆 used 仍为 104779776，RSS 仍为 111408 kB。未调用 `System.gc()`，RSS 未下降，不把它当成释放成功。随后 `ChecksumCpuBurner` 燃烧 1500 ms，校验值非 0，进程 utime+stime 增加 152 tick（约一核）。这只证明生产燃烧器会占用 CPU，不把 M2-09 记成已完成。
+
+据此把 M3-06 从待验收改为已完成，并注明：用户同意本次不强制麒麟机，改为普通 Linux 测试环境取证；麒麟专项仍待验收。

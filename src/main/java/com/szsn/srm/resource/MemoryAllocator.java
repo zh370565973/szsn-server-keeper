@@ -1,7 +1,7 @@
 package com.szsn.srm.resource;
 
 /**
- * 内存负载持有量接口。假分配器只维护计数，不分配 {@code byte[]}。
+ * 内存负载持有量。生产实现分配并触碰 {@code byte[]}；测试可注入只改计数的假分配器。
  */
 public interface MemoryAllocator {
     long heldBytes();

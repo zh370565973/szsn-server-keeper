@@ -9,7 +9,7 @@ import java.util.Objects;
 import org.springframework.http.HttpStatus;
 
 /**
- * 假分配器与三重预算的接入点。固定容量（EXTRA_BYTES）超过当前可新增预算时返回 422，
+ * 分配器与三重预算的接入点。固定容量（EXTRA_BYTES）超过当前可新增预算时返回 422，
  * 且不改变持有量。一次性 {@link #growTo} 供准入测试；生产增长走 {@link ChunkedMemoryGrower}。
  */
 public final class MemoryBudgetGate {
