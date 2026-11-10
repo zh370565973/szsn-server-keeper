@@ -1,6 +1,6 @@
 # 进度
 
-阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M3-01 至 M3-03 已完成（假分配器、分块限速、EXTRA_BYTES / SYSTEM_PERCENT）。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
+阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M3-01 至 M3-05 已完成（假分配器、分块限速、EXTRA_BYTES / SYSTEM_PERCENT、暂停清引用、联合失败回收）。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
 
 ## 已完成
 
@@ -165,6 +165,14 @@ CPU 引擎复用已有 `CpuDutyCalculator`（含安全归零、禁止增长、�
 - `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。113 个测试，0 失败。其中 `MemoryEngineTest` 9 个（新增暂停清引用保留槽位、恢复重检后再增长、停止 2 秒内 heldBytes=0）。
 - `npm run build`（frontend）：成功。资源页与总览 JVM 卡文案对齐三项口径。
 
+## M3-05 联合控制失败回收
+
+`CombinedLoadStarter` 在同一会话内先校验 EXTRA_BYTES 预算，再启动 CPU，再以 `manageSession=false` 挂接内存引擎。任一引擎失败时：`requestStop(FAILURE)`、等待 CPU 退出、清除内存引用（不提前 `confirmWorkerExit`）、释放槽位；`ExecutionStartService` 将行写为 FAILED / `START_FAILED`。不允许静默只跑一侧。`CpuControlService` 开放 COMBINED 启动与预检；MEMORY 单独仍 503。暂停时内存侧不接管会话状态机。仍不分配真实 `byte[]`。
+
+2026-11-10，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。121 个测试，0 失败。其中 `CombinedLoadStarterTest` 6 个（双引擎成功、内存冲突回收、CPU 许可失效回收、超预算两侧不启动、落库 FAILED、SYSTEM_PERCENT 冲突回收），`CpuControlServiceTest` 增补 COMBINED 超预算 422 与受理成功。
+
 ## 下一阶段
 
-M3-05：联合控制失败回收。M2-09 / AT-03 仅在获准测试环境、基线 CPU 低于 10% 时执行。
+M3-06：AT-05 至 AT-08（假分配器边界；获准环境再做有限真实分配）。M2-09 / AT-03 仅在获准测试环境执行。

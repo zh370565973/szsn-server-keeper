@@ -4,7 +4,7 @@ info:
   version: 1.0.0-M2
   description: |
     M2 已开放 CPU 控制写接口（启动/暂停/恢复/停止/改目标），成功返回 202 且不假定引擎已调到目标。
-    开关每次进程启动都是 OFF。内存与联合控制、模板与计划写接口仍返回 503 / CONTROL_UNAVAILABLE。
+    开关每次进程启动都是 OFF。COMBINED 启动已开放（失败回收两侧）；MEMORY 单独与模板/计划写接口仍返回 503 / CONTROL_UNAVAILABLE。
 servers:
   - url: /api/v1
 paths:
@@ -86,7 +86,7 @@ paths:
   /resource/preflight:
     post:
       x-phase: M3
-      summary: CPU/内存预检，无副作用；MEMORY EXTRA_BYTES 返回预算；引擎未开放时 ok=false
+      summary: CPU/内存/联合预检，无副作用；MEMORY 仍 ok=false；COMBINED 返回预算与 workerCount
       responses:
         "200": { description: ok/reasons/workerCount/budget；不预留资源 }
   /executions:
@@ -97,7 +97,7 @@ paths:
         "200": { description: 空页 }
     post:
       x-phase: M3
-      summary: 手动启动 CPU；MEMORY EXTRA_BYTES 超预算 422；预算内内存/联合仍 503
+      summary: 手动启动 CPU 或 COMBINED；MEMORY 仍 503；EXTRA_BYTES 超预算 422；联合任一引擎失败写 FAILED
       parameters:
         - in: header
           name: Idempotency-Key

@@ -2,6 +2,7 @@ package com.szsn.srm.resource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -36,6 +37,7 @@ import org.springframework.jdbc.datasource.SimpleDriverDataSource;
  */
 class CpuControlServiceTest {
     private CpuEngine engine;
+    private MemoryEngine memoryEngine;
     private CpuControlService service;
 
     @AfterEach
@@ -45,6 +47,9 @@ class CpuControlServiceTest {
         }
         if (engine != null) {
             engine.awaitStop(CpuEngine.STOP_TIMEOUT_MS);
+        }
+        if (memoryEngine != null) {
+            memoryEngine.detach();
         }
     }
 
@@ -125,6 +130,51 @@ class CpuControlServiceTest {
         assertTrue(((Number) budget.get("additionalBytes")).longValue() >= 4L * 1024 * 1024);
         assertFalse(harness.sessions.active().isPresent());
         assertEquals(0, harness.memory.heldBytes());
+    }
+
+    @Test
+    void combinedOverBudgetReturns422WithoutStartingEitherEngine() throws Exception {
+        Harness harness = harness(true);
+        engine = harness.engine;
+        service = harness.service;
+        harness.switchOn();
+        fillAmpleMemoryMonitor(harness.store, harness.clock, 12);
+        long heldBefore = harness.memory.heldBytes();
+        ApiException exception = assertThrows(ApiException.class,
+                () -> harness.service.start(UUID.randomUUID().toString(), """
+                        {"resourceMode":"COMBINED","cpuTargetPct":30,"memoryMode":"EXTRA_BYTES",\
+                        "memoryTargetBytes":1073741824,"runMode":"CONTINUOUS"}
+                        """));
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, exception.status());
+        assertEquals(MemoryBudgetGate.BUDGET_EXCEEDED, exception.code());
+        assertEquals(heldBefore, harness.memory.heldBytes());
+        assertNull(harness.engine.view().executionId());
+        assertFalse(harness.sessions.active().isPresent());
+    }
+
+    @Test
+    void combinedStartAcceptedAndFailureRecoversBothEngines() throws Exception {
+        Harness harness = harness(true);
+        engine = harness.engine;
+        memoryEngine = harness.memoryEngine;
+        service = harness.service;
+        harness.switchOn();
+        fillAmpleMemoryMonitor(harness.store, harness.clock, 12);
+
+        Map<String, Object> accepted = harness.service.start(UUID.randomUUID().toString(), """
+                {"resourceMode":"COMBINED","cpuTargetPct":30,"memoryMode":"EXTRA_BYTES",\
+                "memoryTargetBytes":4194304,"runMode":"CONTINUOUS"}
+                """);
+        assertEquals(Boolean.FALSE, accepted.get("engineCompleted"));
+        assertEquals("STARTING", accepted.get("status"));
+        assertEquals((String) accepted.get("executionId"), harness.engine.view().executionId());
+        assertEquals((String) accepted.get("executionId"), harness.memoryEngine.view().executionId());
+
+        harness.sessions.requestStop((String) accepted.get("executionId"), StopKind.USER);
+        assertTrue(engine.awaitStop(CpuEngine.STOP_TIMEOUT_MS));
+        harness.memoryEngine.stopAndClear(MemoryEngine.CLEAR_TIMEOUT_MS, false);
+        assertNull(harness.engine.view().executionId());
+        assertNull(harness.memoryEngine.view().executionId());
     }
 
     @Test
@@ -231,10 +281,10 @@ class CpuControlServiceTest {
                 memory, budgetGate, samples, () -> false, System::nanoTime, nanos -> {
                 }, held -> {
                 });
-        MemoryEngine memoryEngine = new MemoryEngine(sessions, memory, budgetGate, samples, grower, safety::current, clock::millis);
+        MemoryEngine createdMemory = new MemoryEngine(sessions, memory, budgetGate, samples, grower, safety::current, clock::millis);
         CpuControlService createdService = new CpuControlService(availability, controlSwitch, sessions, starts, created,
-                memoryEngine, budgetGate, store, safety, storage, clock);
-        return new Harness(createdService, created, sessions, store, clock, controlSwitch, memory);
+                createdMemory, budgetGate, store, safety, storage, clock);
+        return new Harness(createdService, created, createdMemory, sessions, store, clock, controlSwitch, memory);
     }
 
     private static DataSource memoryDb() throws Exception {
@@ -247,7 +297,8 @@ class CpuControlServiceTest {
         return dataSource;
     }
 
-    private record Harness(CpuControlService service, CpuEngine engine, ResourceLoadManager sessions, SnapshotStore store,
+    private record Harness(CpuControlService service, CpuEngine engine, MemoryEngine memoryEngine,
+                           ResourceLoadManager sessions, SnapshotStore store,
                            MutableClock clock, ControlSwitch controlSwitch, FakeMemoryAllocator memory) {
         void switchOn() {
             controlSwitch.setEnabled(true, Operator.system());

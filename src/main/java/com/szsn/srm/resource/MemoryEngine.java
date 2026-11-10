@@ -61,8 +61,13 @@ public final class MemoryEngine {
 
     /**
      * 启动 EXTRA_BYTES。新目标须通过固定容量预算门闸（超限 422 且不分配）。
+     * 单独内存会话时推进状态机；联合控制由 CPU 侧持有会话时传 {@code manageSession=false}。
      */
     public MemoryEngineView startExtraBytes(SessionClaim claim, long targetBytes) {
+        return startExtraBytes(claim, targetBytes, true);
+    }
+
+    public MemoryEngineView startExtraBytes(SessionClaim claim, long targetBytes, boolean manageSession) {
         ChunkedMemoryGrower.requireAligned(targetBytes);
         if (targetBytes < ChunkedMemoryGrower.CHUNK_BYTES) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetBytes 不合法");
@@ -74,7 +79,9 @@ public final class MemoryEngine {
             throw new IllegalStateException("内存引擎已在运行");
         }
         try {
-            sessions.markRunning(claim.executionId());
+            if (manageSession) {
+                sessions.markRunning(claim.executionId());
+            }
             reportHeld(claim.executionId(), allocator.heldBytes());
         } catch (RuntimeException exception) {
             state.compareAndSet(created, null);
@@ -87,6 +94,10 @@ public final class MemoryEngine {
      * 启动 SYSTEM_PERCENT。允许在预算受限下启动，运行中显示 TARGET_LIMITED。
      */
     public MemoryEngineView startSystemPercent(SessionClaim claim, double targetPct) {
+        return startSystemPercent(claim, targetPct, true);
+    }
+
+    public MemoryEngineView startSystemPercent(SessionClaim claim, double targetPct, boolean manageSession) {
         requirePercent(targetPct);
         requireClaim(claim);
         State created = State.systemPercent(claim, targetPct);
@@ -94,7 +105,9 @@ public final class MemoryEngine {
             throw new IllegalStateException("内存引擎已在运行");
         }
         try {
-            sessions.markRunning(claim.executionId());
+            if (manageSession) {
+                sessions.markRunning(claim.executionId());
+            }
             reportHeld(claim.executionId(), allocator.heldBytes());
         } catch (RuntimeException exception) {
             state.compareAndSet(created, null);
@@ -105,14 +118,23 @@ public final class MemoryEngine {
 
     /**
      * RUNNING → PAUSING → PAUSED。清除全部负载引用，heldBytes 归零，保留槽位与许可。
+     * 联合控制下由编排层推进会话时传 {@code manageSession=false}。
      */
     public MemoryEngineView pause() {
+        return pause(true);
+    }
+
+    public MemoryEngineView pause(boolean manageSession) {
         State current = requireActive();
         String executionId = current.claim.executionId();
-        sessions.beginPause(executionId);
+        if (manageSession) {
+            sessions.beginPause(executionId);
+        }
         current.paused.set(true);
         clearHeld(executionId);
-        sessions.completePause(executionId);
+        if (manageSession) {
+            sessions.completePause(executionId);
+        }
         return current.view(allocator.heldBytes(), systemUsedBytes(samples.sample()), systemUsedPct(samples.sample()), false);
     }
 
@@ -131,31 +153,48 @@ public final class MemoryEngine {
 
     /**
      * 恢复须重新预检。失败保持 PAUSED；通过后从 heldBytes=0 再渐进增长。
+     * 联合控制下会话已由 CPU 侧恢复时传 {@code manageSession=false}（仍执行 gate）。
      */
     public MemoryEngineView resume(ResumeGate gate) {
+        return resume(gate, true);
+    }
+
+    public MemoryEngineView resume(ResumeGate gate, boolean manageSession) {
         State current = requireActive();
         String executionId = current.claim.executionId();
         ResumeGate check = gate == null ? ResumeGate.OPEN : gate;
         try {
             check.admit();
         } catch (RuntimeException exception) {
-            sessions.rejectResume(executionId);
+            if (manageSession) {
+                sessions.rejectResume(executionId);
+            }
             throw exception;
         }
-        sessions.acceptResume(executionId);
+        if (manageSession) {
+            sessions.acceptResume(executionId);
+        }
         current.paused.set(false);
         current.lastReleaseAtMs = null;
-        sessions.markRunning(executionId);
+        if (manageSession) {
+            sessions.markRunning(executionId);
+        }
         reportHeld(executionId, allocator.heldBytes());
         return current.view(allocator.heldBytes(), systemUsedBytes(samples.sample()), systemUsedPct(samples.sample()), false);
     }
 
     /**
-     * 停止路径：清除引用、确认 Worker 退出许可。正常调度下应在 {@link #CLEAR_TIMEOUT_MS} 内 heldBytes=0。
+     * 停止路径：清除引用；单独内存会话时确认 Worker 退出许可。
+     * 联合控制下由 CPU 侧确认退出时传 {@code confirmExit=false}，避免槽位在 CPU Worker 仍运行时被提前释放。
+     * 正常调度下应在 {@link #CLEAR_TIMEOUT_MS} 内 heldBytes=0。
      *
      * @return true 表示时限内 heldBytes 已归零
      */
     public boolean stopAndClear(long timeoutMs) throws InterruptedException {
+        return stopAndClear(timeoutMs, true);
+    }
+
+    public boolean stopAndClear(long timeoutMs, boolean confirmExit) throws InterruptedException {
         State current = state.get();
         String executionId = current == null ? null : current.claim.executionId();
         if (current != null) {
@@ -173,8 +212,10 @@ public final class MemoryEngine {
         }
         boolean zero = allocator.heldBytes() == 0;
         if (current != null && state.compareAndSet(current, null)) {
-            current.claim.permit().acknowledgeExit();
-            sessions.confirmWorkerExit(current.claim.permit());
+            if (confirmExit) {
+                current.claim.permit().acknowledgeExit();
+                sessions.confirmWorkerExit(current.claim.permit());
+            }
         } else if (current == null && zero) {
             // 无活动状态时仍保证分配器为空
         }

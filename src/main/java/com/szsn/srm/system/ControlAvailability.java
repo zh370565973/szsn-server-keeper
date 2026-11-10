@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class ControlAvailability {
-    public static final String MEMORY_ENGINE_REASON = "内存引擎尚未开放";
+    public static final String MEMORY_ENGINE_REASON = "内存单独控制尚未开放";
     public static final String COMBINED_ENGINE_REASON = "联合控制需要内存引擎，当前仅开放 CPU";
 
     private final Supplier<EnvironmentReport> environment;
@@ -52,6 +52,10 @@ public class ControlAvailability {
 
     public void rejectMemoryOrCombined() {
         throw unavailable(List.of(MEMORY_ENGINE_REASON, COMBINED_ENGINE_REASON));
+    }
+
+    public void rejectMemoryOnly() {
+        throw unavailable(List.of(MEMORY_ENGINE_REASON));
     }
 
     public static ApiException unavailable(List<String> reasons) {
