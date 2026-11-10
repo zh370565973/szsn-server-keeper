@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.szsn.srm.common.ApiException;
+import com.szsn.srm.common.Units;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -24,6 +25,8 @@ final class StartConfig {
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
     private static final BigDecimal HUNDRED = new BigDecimal("100");
+    private static final BigDecimal MEMORY_PCT_MIN = BigDecimal.valueOf(LoadBounds.MEMORY_TARGET_PCT_MIN);
+    private static final BigDecimal MEMORY_PCT_MAX = BigDecimal.valueOf(LoadBounds.MEMORY_TARGET_PCT_MAX);
     private static final Set<String> FIELDS = Set.of(
             "name",
             "resourceMode",
@@ -110,10 +113,13 @@ final class StartConfig {
             memoryMode = text(raw, "memoryMode");
             if (memoryMode.equals("EXTRA_BYTES")) {
                 requireAbsent(raw, "memoryTargetPct");
-                memoryTargetBytes = exactLong(raw, "memoryTargetBytes", 1);
+                memoryTargetBytes = exactLong(raw, "memoryTargetBytes", 1, Long.MAX_VALUE);
+                if (memoryTargetBytes % Units.BLOCK != 0) {
+                    throw invalid("memoryTargetBytes 必须是 4MiB 的整数倍");
+                }
             } else if (memoryMode.equals("SYSTEM_PERCENT")) {
                 requireAbsent(raw, "memoryTargetBytes");
-                memoryTargetPct = percent(raw, "memoryTargetPct");
+                memoryTargetPct = memoryPercent(raw, "memoryTargetPct");
             } else {
                 throw invalid("memoryMode 不合法");
             }
@@ -122,7 +128,8 @@ final class StartConfig {
         }
         Long durationSeconds = null;
         if (runMode.equals("FINITE")) {
-            durationSeconds = exactLong(raw, "durationSeconds", 1);
+            durationSeconds = exactLong(raw, "durationSeconds",
+                    LoadBounds.DURATION_MIN_SECONDS, LoadBounds.DURATION_MAX_SECONDS);
         } else {
             requireAbsent(raw, "durationSeconds");
         }
@@ -166,7 +173,7 @@ final class StartConfig {
         return node.asText();
     }
 
-    private static long exactLong(JsonNode raw, String field, long minimum) {
+    private static long exactLong(JsonNode raw, String field, long minimum, long maximum) {
         JsonNode node = raw.get(field);
         if (node == null || !node.isNumber()) {
             throw invalid(field + " 不合法");
@@ -181,10 +188,28 @@ final class StartConfig {
         } catch (ArithmeticException exception) {
             throw invalid(field + " 超出范围");
         }
-        if (parsed < minimum) {
+        if (parsed < minimum || parsed > maximum) {
+            if ("durationSeconds".equals(field)) {
+                throw invalid("durationSeconds 必须在 10 秒到 7 天之间");
+            }
             throw invalid(field + " 不合法");
         }
         return parsed;
+    }
+
+    private static BigDecimal memoryPercent(JsonNode raw, String field) {
+        JsonNode node = raw.get(field);
+        if (node == null || !node.isNumber()) {
+            throw invalid(field + " 不合法");
+        }
+        BigDecimal value = node.decimalValue().stripTrailingZeros();
+        if (value.scale() < 0) {
+            value = value.setScale(0);
+        }
+        if (value.compareTo(MEMORY_PCT_MIN) < 0 || value.compareTo(MEMORY_PCT_MAX) > 0) {
+            throw invalid(field + " 必须在 1 到 70 之间");
+        }
+        return value;
     }
 
     private static BigDecimal percent(JsonNode raw, String field) {

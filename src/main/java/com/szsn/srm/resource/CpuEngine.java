@@ -17,7 +17,8 @@ import org.springframework.http.HttpStatus;
 /**
  * CPU 负载引擎。复用 {@link CpuDutyCalculator}；Worker 数不超过逻辑核心数；
  * 停止后在 2 秒内确认退出。暂停只停止计算并保留槽位；恢复须重新预检。
- * 可注入采集与燃烧器；本类不分配内存，也不打开 HTTP 启动入口。
+ * 可注入采集与燃烧器。生产配置注入 {@link ChecksumCpuBurner}，按 duty 做真实计算；
+ * 单元测试应注入不自旋的燃烧器。本类不分配内存，HTTP 入口在 {@link CpuControlService}。
  */
 public final class CpuEngine {
     public static final long SLICE_MS = 100L;

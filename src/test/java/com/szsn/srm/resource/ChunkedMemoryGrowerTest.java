@@ -219,6 +219,43 @@ class ChunkedMemoryGrowerTest {
         assertEquals(0, allocator.heldBytes());
     }
 
+    @Test
+    void stopsWhenAllocatorRefusesToRetainChunk() {
+        MemoryAllocator rejecting = new MemoryAllocator() {
+            private long held;
+
+            @Override
+            public long heldBytes() {
+                return held;
+            }
+
+            @Override
+            public long grow(long deltaBytes) {
+                return held;
+            }
+
+            @Override
+            public long release(long deltaBytes) {
+                held = Math.max(0L, held - deltaBytes);
+                return held;
+            }
+
+            @Override
+            public void clear() {
+                held = 0L;
+            }
+        };
+        MemoryBudgetGate gate = MemoryBudgetGate.withDefaults(rejecting, ChunkedMemoryGrowerTest::freshAmple);
+        ChunkedMemoryGrower grower = new ChunkedMemoryGrower(rejecting, gate, ChunkedMemoryGrowerTest::freshAmple);
+        ResourceLoadManager sessions = new ResourceLoadManager();
+        SessionClaim claim = sessions.claim("mem-reject");
+        ChunkedMemoryGrower.GrowResult result = grower.growToward(8L * Units.MIB, claim.permit());
+        assertEquals(ChunkedMemoryGrower.StopReason.STOPPED, result.reason());
+        assertEquals("ALLOCATOR_REJECTED", result.detail());
+        assertEquals(0L, result.heldBytes());
+        assertEquals(0L, result.grownBytes());
+    }
+
     private static MemorySample freshAmple() {
         return new MemorySample(
                 8L * Units.GIB,

@@ -15,8 +15,9 @@ import org.springframework.http.HttpStatus;
 
 /**
  * 内存负载引擎：EXTRA_BYTES 固定持有目标；SYSTEM_PERCENT 每拍按系统占用调节。
- * 使用假分配器与 {@link ChunkedMemoryGrower}，不分配真实 {@code byte[]}。
- * 暂停与停止在正常调度下于 {@link #CLEAR_TIMEOUT_MS} 内清除负载引用并使 heldBytes=0。
+ * 经 {@link ChunkedMemoryGrower} 调用注入的 {@link MemoryAllocator}。生产默认是真实 {@code byte[]} 分块；
+ * 测试可注入假分配器。暂停与停止在正常调度下于 {@link #CLEAR_TIMEOUT_MS} 内清除负载引用并使 heldBytes=0。
+ * 不调用 {@code System.gc()}，也不把 RSS 下降当作释放成功。
  */
 public final class MemoryEngine {
     public static final long CONTROL_PERIOD_MS = 2_000L;

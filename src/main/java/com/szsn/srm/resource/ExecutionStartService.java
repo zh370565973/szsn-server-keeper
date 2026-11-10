@@ -15,9 +15,10 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * 已获准的手动启动先提交 STARTING 和配置快照，事务成功后才调用启动动作。
+ * 已获准的手动启动先校验配置，再提交 STARTING 和配置快照，事务成功后才调用启动动作。
+ * 时长、系统占用目标或内存字节未按 PRD 对齐时在落库前拒绝。
  * 开关关闭或急停锁存时直接拒绝，不写执行记录。事务失败、参数冲突和 24 小时内的重放都不会再次启动。
- * 本类不运行 CPU 引擎，也不分配内存。公开的 HTTP 启动入口仍返回 503。
+ * 本类不运行 CPU/内存引擎。公开 HTTP 由 {@link CpuControlService} 编排；非 Linux 或环境不可控时仍返回 503。
  */
 @Service
 public class ExecutionStartService {

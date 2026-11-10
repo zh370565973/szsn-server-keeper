@@ -2,7 +2,7 @@ package com.szsn.srm.resource;
 
 /**
  * 假分配器：只更新 heldBytes 计数，不触碰真实堆或 native 内存。
- * 供开发机与自动测试使用；真实分块分配器留到后续任务。
+ * 供单元测试注入。生产 Bean 使用 {@link ByteArrayMemoryAllocator}。
  */
 public final class FakeMemoryAllocator implements MemoryAllocator {
     private final Object lock = new Object();
