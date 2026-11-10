@@ -64,11 +64,23 @@ public class ControlSwitch implements StartGate {
     }
 
     public ControlState emergencyStop(Operator operator) {
+        return latchAndStop(EMERGENCY_REASON, operator, "EMERGENCY_STOP");
+    }
+
+    /**
+     * 安全线程触发的锁存。先使 Worker 失效并关闭开关，再尝试持久化；写库失败不撤销停止。
+     */
+    public ControlState safetyLatch(String latchReason, Operator operator) {
+        String normalized = latchReason == null || latchReason.isBlank() ? "SAFETY_STOP" : latchReason;
+        return latchAndStop(normalized, operator, "SAFETY_LATCH");
+    }
+
+    private ControlState latchAndStop(String latchReason, Operator operator, String auditAction) {
         boolean write;
         synchronized (stateLock) {
             if (!latched) {
                 latched = true;
-                reason = EMERGENCY_REASON;
+                reason = latchReason;
                 latchedAt = clock.millis();
                 epoch++;
                 persisted = false;
@@ -81,7 +93,7 @@ public class ControlSwitch implements StartGate {
             log.warn("急停锁存未能写入数据库，本进程保持锁存，下次启动开关仍为关闭");
         }
         ControlState state = state();
-        audit(operator, "EMERGENCY_STOP", "SUCCESS", state.latchPersisted() ? null : "LATCH_PERSIST_FAILED");
+        audit(operator, auditAction, "SUCCESS", state.latchPersisted() ? null : "LATCH_PERSIST_FAILED");
         return state;
     }
 

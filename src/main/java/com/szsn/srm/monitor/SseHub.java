@@ -67,7 +67,21 @@ public final class SseHub {
     public record ResourcePulse(String controlSwitch, boolean emergencyLatched, boolean controlCapable, List<String> controlDisabledReasons) {
     }
 
-    public record SafetyPulse(Quality quality, long ageMs, boolean storageHealthy, String storageFault) {
+    public record SafetyPulse(
+            Quality quality,
+            long ageMs,
+            boolean storageHealthy,
+            String storageFault,
+            boolean forbidCpuGrowth,
+            boolean zeroDuty,
+            boolean forbidMemoryGrowth,
+            boolean safetyStop,
+            boolean latch,
+            List<String> reasons) {
+
+        public SafetyPulse(Quality quality, long ageMs, boolean storageHealthy, String storageFault) {
+            this(quality, ageMs, storageHealthy, storageFault, true, true, true, false, false, List.of());
+        }
     }
 
     public final class Client {
