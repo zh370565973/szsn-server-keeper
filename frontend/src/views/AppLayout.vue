@@ -1,16 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { message } from 'ant-design-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
-import { monitor, refreshInfo, startStream, stopStream } from '../monitor'
+import { monitor, refreshInfo, refreshResource, startStream, stopStream } from '../monitor'
 
 const route = useRoute()
 const router = useRouter()
 const selected = computed(() => (route.path === '/' ? '/' : route.path))
-const reasons = computed(() => monitor.info?.controlDisabledReasons ?? ['正在读取控制状态'])
+const stopping = ref(false)
 
 onMounted(async () => {
   await refreshInfo()
+  await refreshResource().catch(() => undefined)
   startStream()
 })
 onUnmounted(stopStream)
@@ -23,6 +25,19 @@ async function logout() {
   await api<void>('/auth/logout', { method: 'POST' })
   stopStream()
   await router.replace('/login')
+}
+
+async function emergency() {
+  stopping.value = true
+  try {
+    await api('/resource/emergency-stop', { method: 'POST' })
+    message.success('已紧急停止，控制开关关闭并锁存')
+    await refreshResource()
+  } catch (caught) {
+    message.error(caught instanceof Error ? caught.message : '急停失败')
+  } finally {
+    stopping.value = false
+  }
 }
 </script>
 
@@ -43,13 +58,13 @@ async function logout() {
     <a-layout>
       <a-layout-header class="header">
         <div>
-          <strong>M1 只读监控</strong>
-          <span class="hint">目标环境待验收</span>
+          <strong>监控</strong>
+          <span class="hint">负载引擎未安装</span>
         </div>
         <div class="status-row">
-          <a-tooltip :title="reasons.join('；')">
-            <a-button danger disabled>紧急停止（不可用）</a-button>
-          </a-tooltip>
+          <a-tag v-if="monitor.resource?.emergencyLatched" color="error">急停已锁存</a-tag>
+          <a-tag>{{ monitor.resource?.controlSwitch ?? 'OFF' }}</a-tag>
+          <a-button danger :loading="stopping" @click="emergency">紧急停止</a-button>
           <a-button @click="logout">退出</a-button>
         </div>
       </a-layout-header>

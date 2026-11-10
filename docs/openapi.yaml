@@ -3,8 +3,8 @@ info:
   title: Server Resource Manager API
   version: 1.0.0-M1
   description: |
-    M1 实现认证、只读监控和历史聚合。负载、计划与急停锁存写入在后续阶段。
-    控制类写接口当前返回 503 / CONTROL_UNAVAILABLE，且不产生负载。
+    M1 实现认证、只读监控和历史聚合。M2-03 实现控制开关、急停锁存和人工解除。
+    开关每次进程启动都是 OFF。其余控制类写接口仍返回 503 / CONTROL_UNAVAILABLE，且不产生负载。
 servers:
   - url: /api/v1
 paths:
@@ -79,10 +79,10 @@ paths:
         "200": { description: 桶列表 }
   /resource/status:
     get:
-      x-phase: M1
-      summary: 开关、锁存和当前实例
+      x-phase: M2
+      summary: 开关、锁存、健康窗口和当前实例
       responses:
-        "200": { description: M1 开关恒为 OFF，无活动实例 }
+        "200": { description: 开关每次启动为 OFF；急停后 emergencyLatched 为 true }
   /resource/preflight:
     post:
       x-phase: M2
@@ -163,21 +163,36 @@ paths:
   /resource/emergency-stop:
     post:
       x-phase: M2
-      summary: 急停锁存
+      summary: 急停锁存，重复调用幂等
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: 开关 OFF 且已锁存；写库失败时本进程仍锁存 }
+        "401": { description: 未登录 }
+        "403": { description: 缺少 CSRF }
   /resource/reset-latch:
     post:
       x-phase: M2
-      summary: 解除锁存
+      summary: 人工解除锁存
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: 锁存已解除，开关仍为 OFF }
+        "409": { description: 仍有活动会话、指标未连续健康 30 秒，或解除期间再次急停 }
+        "503": { description: 数据库不可写，锁存保持 }
   /resource/control-switch:
     put:
       x-phase: M2
-      summary: 控制开关
+      summary: 控制开关；开启不解除锁存，也不启动负载
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: 当前开关状态 }
+        "400": { description: enabled 不是布尔值 }
+        "409": { description: CONTROL_LATCHED，开启被拒绝 }
   /tasks:
     get:
       x-phase: M1

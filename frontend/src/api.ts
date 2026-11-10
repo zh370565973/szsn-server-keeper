@@ -119,6 +119,13 @@ export interface SystemInfo {
 export interface ResourceStatus {
   controlSwitch: string
   emergencyLatched: boolean
+  latchReason?: string
+  latchPersisted?: boolean
+  healthyForMs?: number
+  healthReasons?: string[]
+  latchResetReady?: boolean
+  storageHealthy?: boolean
+  activeExecution?: { executionId: string; status: string; heldBytes: number } | null
   controlCapable: boolean
   controlDisabledReasons: string[]
   loadEngine: string
@@ -144,6 +151,9 @@ export interface SettingsView {
   controlSwitch: string
   controlSwitchPolicy: string
   emergencyLatched: boolean
+  latchReason?: string
+  healthyForMs?: number
+  latchResetReady?: boolean
   thresholdsReadOnly: boolean
   thresholds: Record<string, string | number | boolean>
   deploy: Record<string, string>

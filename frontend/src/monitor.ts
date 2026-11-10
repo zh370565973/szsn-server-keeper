@@ -1,9 +1,10 @@
 import { reactive } from 'vue'
-import { api, type MetricSnapshot, type SystemInfo } from './api'
+import { api, type MetricSnapshot, type ResourceStatus, type SystemInfo } from './api'
 
 export const monitor = reactive({
   snapshot: null as MetricSnapshot | null,
   info: null as SystemInfo | null,
+  resource: null as ResourceStatus | null,
   connected: false,
   error: ''
 })
@@ -34,6 +35,10 @@ export async function refreshInfo() {
   monitor.info = await api<SystemInfo>('/system/info')
 }
 
+export async function refreshResource() {
+  monitor.resource = await api<ResourceStatus>('/resource/status')
+}
+
 export function startStream() {
   stopped = false
   connect()
@@ -58,6 +63,26 @@ function connect() {
     const snapshot = JSON.parse((event as MessageEvent).data) as MetricSnapshot
     monitor.snapshot = snapshot
     pushPoint(snapshot)
+  })
+  source.addEventListener('resource', (event) => {
+    const pulse = JSON.parse((event as MessageEvent).data) as {
+      controlSwitch?: string
+      emergencyLatched?: boolean
+      controlCapable?: boolean
+      controlDisabledReasons?: string[]
+    }
+    const current = monitor.resource
+    monitor.resource = {
+      controlSwitch: pulse.controlSwitch ?? current?.controlSwitch ?? 'OFF',
+      emergencyLatched: pulse.emergencyLatched ?? current?.emergencyLatched ?? false,
+      controlCapable: pulse.controlCapable ?? current?.controlCapable ?? false,
+      controlDisabledReasons: pulse.controlDisabledReasons ?? current?.controlDisabledReasons ?? [],
+      loadEngine: current?.loadEngine ?? 'NOT_INSTALLED',
+      latchReason: current?.latchReason,
+      healthyForMs: current?.healthyForMs,
+      latchResetReady: current?.latchResetReady,
+      activeExecution: current?.activeExecution
+    }
   })
   source.onerror = () => {
     monitor.connected = false

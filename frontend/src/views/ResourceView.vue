@@ -57,8 +57,12 @@ const reasons = () => status.value?.controlDisabledReasons?.join('；') || '负�
     </div>
     <a-descriptions bordered size="small" :column="1">
       <a-descriptions-item label="控制开关">{{ status?.controlSwitch ?? 'OFF' }}</a-descriptions-item>
-      <a-descriptions-item label="急停锁存">未锁存</a-descriptions-item>
-      <a-descriptions-item label="当前会话">无活动会话</a-descriptions-item>
+      <a-descriptions-item label="急停锁存">
+        {{ status?.emergencyLatched ? `已锁存${status.latchReason ? `（${status.latchReason}）` : ''}` : '未锁存' }}
+      </a-descriptions-item>
+      <a-descriptions-item label="当前会话">
+        {{ status?.activeExecution ? status.activeExecution.status : '无活动会话' }}
+      </a-descriptions-item>
       <a-descriptions-item label="请求目标 / 实际值 / 允许新增">引擎未安装，没有目标</a-descriptions-item>
     </a-descriptions>
   </div>

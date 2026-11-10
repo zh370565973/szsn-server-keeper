@@ -4,6 +4,8 @@ import com.szsn.srm.common.ApiBody;
 import com.szsn.srm.common.Bodies;
 import com.szsn.srm.common.SrmProperties;
 import com.szsn.srm.common.Units;
+import com.szsn.srm.resource.ControlState;
+import com.szsn.srm.resource.ControlSwitch;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.core.env.Environment;
@@ -18,13 +20,15 @@ public class SystemController {
     private final StorageHealth storageHealth;
     private final SrmProperties properties;
     private final Environment environment;
+    private final ControlSwitch controlSwitch;
 
     public SystemController(ControlAvailability availability, StorageHealth storageHealth, SrmProperties properties,
-                            Environment environment) {
+                            Environment environment, ControlSwitch controlSwitch) {
         this.availability = availability;
         this.storageHealth = storageHealth;
         this.properties = properties;
         this.environment = environment;
+        this.controlSwitch = controlSwitch;
     }
 
     @GetMapping("/system/info")
@@ -78,12 +82,16 @@ public class SystemController {
         deploy.put("config", "/etc/server-resource-manager");
         deploy.put("data", "/var/lib/server-resource-manager");
         deploy.put("log", "/var/log/server-resource-manager");
+        ControlState state = controlSwitch.state();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("timezone", properties.getTimezone());
         body.put("listen", environment.getProperty("server.address", "127.0.0.1") + ":" + environment.getProperty("server.port", "8080"));
-        body.put("controlSwitch", "OFF");
-        body.put("controlSwitchPolicy", "每次服务启动均为关闭，需要人工开启");
-        body.put("emergencyLatched", false);
+        body.put("controlSwitch", state.controlSwitch());
+        body.put("controlSwitchPolicy", "每次服务启动均为关闭，需要人工开启。打开开关不会解除急停锁存。");
+        body.put("emergencyLatched", state.emergencyLatched());
+        body.put("latchReason", state.latchReason());
+        body.put("healthyForMs", state.healthyForMs());
+        body.put("latchResetReady", state.latchResetReady());
         body.put("thresholdsReadOnly", true);
         body.put("thresholds", thresholds);
         body.put("deploy", deploy);

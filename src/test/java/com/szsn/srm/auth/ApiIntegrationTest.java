@@ -129,6 +129,74 @@ class ApiIntegrationTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data.loadEngine").value("NOT_INSTALLED"));
     }
 
+    @Test
+    void emergencyStopRequiresSessionAndCsrfThenLatchesWithoutStartingLoad() throws Exception {
+        long executions = jdbc.queryForObject("SELECT COUNT(*) FROM TASK_EXECUTION", Long.class);
+        MvcResult anonymous = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/v1/resource/emergency-stop"))
+                .andReturn();
+        assertTrue(anonymous.getResponse().getStatus() == 401 || anonymous.getResponse().getStatus() == 403);
+
+        MvcResult csrf = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/auth/csrf"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andReturn();
+        String token = objectMapper.readTree(csrf.getResponse().getContentAsString()).path("data").path("token").asText();
+        var cookie = csrf.getResponse().getCookie("XSRF-TOKEN");
+        assertNotNull(cookie);
+        MvcResult login = loginAgain(cookie, token);
+        MockHttpSession active = (MockHttpSession) login.getRequest().getSession(false);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/resource/emergency-stop")
+                        .session(active))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isForbidden());
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM SYS_CONFIG WHERE CONFIG_KEY = 'emergency.latch'", Integer.class));
+
+        MvcResult stopped = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .post("/api/v1/resource/emergency-stop")
+                        .session(active)
+                        .cookie(cookie)
+                        .header("X-XSRF-TOKEN", token))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andReturn();
+        JsonNode body = objectMapper.readTree(stopped.getResponse().getContentAsString()).path("data");
+        assertEquals("OFF", body.path("controlSwitch").asText());
+        assertTrue(body.path("emergencyLatched").asBoolean());
+        assertEquals("EMERGENCY_STOP", body.path("latchReason").asText());
+        assertTrue(body.path("latchPersisted").asBoolean());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM SYS_CONFIG WHERE CONFIG_KEY = 'emergency.latch'", Integer.class));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/resource/emergency-stop")
+                        .session(active)
+                        .cookie(cookie)
+                        .header("X-XSRF-TOKEN", token))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM SYS_CONFIG WHERE CONFIG_KEY = 'emergency.latch'", Integer.class));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/v1/resource/control-switch")
+                        .session(active)
+                        .cookie(cookie)
+                        .header("X-XSRF-TOKEN", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"enabled\":true}"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.error.code").value("CONTROL_LATCHED"));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/resource/status").session(active))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data.controlSwitch").value("OFF"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data.emergencyLatched").value(true))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.data.loadEngine").value("NOT_INSTALLED"));
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/executions")
+                        .session(active)
+                        .cookie(cookie)
+                        .header("X-XSRF-TOKEN", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"resourceMode\":\"CPU\",\"cpuTargetPct\":30,\"runMode\":\"FINITE\",\"durationSeconds\":60}"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isServiceUnavailable());
+        assertEquals(executions, jdbc.queryForObject("SELECT COUNT(*) FROM TASK_EXECUTION", Long.class));
+    }
+
     private MvcResult loginAgain(jakarta.servlet.http.Cookie cookie, String token) throws Exception {
         return mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/auth/login")
                         .cookie(cookie)

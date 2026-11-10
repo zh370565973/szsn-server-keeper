@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import javax.sql.DataSource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -15,8 +16,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 已获准的手动启动先提交 STARTING 和配置快照，事务成功后才调用启动动作。
- * 事务失败、参数冲突和 24 小时内的重放都不会再次启动。本类不运行 CPU 引擎，也不分配内存。
- * 控制开关、急停锁存和预检仍未接入，因此 HTTP 启动入口继续拒绝。
+ * 开关关闭或急停锁存时直接拒绝，不写执行记录。事务失败、参数冲突和 24 小时内的重放都不会再次启动。
+ * 本类不运行 CPU 引擎，也不分配内存。公开的 HTTP 启动入口仍返回 503。
  */
 @Service
 public class ExecutionStartService {
@@ -26,17 +27,26 @@ public class ExecutionStartService {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactionTemplate;
     private final Clock clock;
+    private final StartGate startGate;
 
     public ExecutionStartService(DataSource dataSource, PlatformTransactionManager transactions, Clock clock) {
+        this(dataSource, transactions, clock, StartGate.OPEN);
+    }
+
+    @Autowired
+    public ExecutionStartService(DataSource dataSource, PlatformTransactionManager transactions, Clock clock,
+                                 StartGate startGate) {
         this.jdbc = new JdbcTemplate(dataSource);
         this.transactionTemplate = new TransactionTemplate(transactions);
         this.clock = clock;
+        this.startGate = startGate == null ? StartGate.OPEN : startGate;
     }
 
     public StartedExecution start(String idempotencyKey, String configJson, WorkerLaunch launch) {
         if (launch == null) {
             throw new IllegalArgumentException("启动动作不能为空");
         }
+        startGate.admit();
         StartConfig.Prepared prepared = StartConfig.prepare(idempotencyKey, configJson);
         PersistResult saved = admitWithRetry(prepared);
         if (!saved.fresh()) {

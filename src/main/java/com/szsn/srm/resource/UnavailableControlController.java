@@ -2,7 +2,6 @@ package com.szsn.srm.resource;
 
 import com.szsn.srm.common.ApiBody;
 import com.szsn.srm.common.ApiException;
-import com.szsn.srm.common.Bodies;
 import com.szsn.srm.system.ControlAvailability;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
@@ -50,21 +49,6 @@ public class UnavailableControlController {
 
     @PostMapping("/executions/{id}/stop")
     public ApiBody<Void> stop(@PathVariable String id) {
-        return reject();
-    }
-
-    @PostMapping("/resource/emergency-stop")
-    public ApiBody<Void> emergency() {
-        return reject();
-    }
-
-    @PostMapping("/resource/reset-latch")
-    public ApiBody<Void> resetLatch() {
-        return reject();
-    }
-
-    @PutMapping("/resource/control-switch")
-    public ApiBody<Void> controlSwitch() {
         return reject();
     }
 
