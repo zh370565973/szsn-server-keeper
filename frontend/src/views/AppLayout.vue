@@ -59,7 +59,11 @@ async function emergency() {
       <a-layout-header class="header">
         <div>
           <strong>监控</strong>
-          <span class="hint">{{ monitor.info?.loadEngine === 'CPU' ? 'CPU 引擎已接入' : '负载引擎未安装' }}</span>
+          <span class="hint">{{
+            monitor.info?.loadEngine === 'CPU_MEMORY' || monitor.info?.loadEngine === 'CPU'
+              ? 'CPU/内存引擎已接入'
+              : '负载引擎未安装'
+          }}</span>
         </div>
         <div class="status-row">
           <a-tag v-if="monitor.resource?.emergencyLatched" color="error">急停已锁存</a-tag>

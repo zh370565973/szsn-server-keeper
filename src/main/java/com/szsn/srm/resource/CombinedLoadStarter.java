@@ -59,9 +59,9 @@ public final class CombinedLoadStarter {
             cpu.start(claim, cpuTargetPct, workerCount, autoControl);
             cpuStarted = true;
             if (MemoryEngine.MODE_EXTRA_BYTES.equals(memoryMode)) {
-                memory.startExtraBytes(claim, memoryTargetBytes, false);
+                memory.startExtraBytes(claim, memoryTargetBytes, false, autoControl);
             } else {
-                memory.startSystemPercent(claim, memoryTargetPct, false);
+                memory.startSystemPercent(claim, memoryTargetPct, false, autoControl);
             }
             memoryStarted = true;
         } catch (RuntimeException exception) {

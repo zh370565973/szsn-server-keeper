@@ -13,6 +13,7 @@ public record MemoryEngineView(
         String memoryMode,
         Long memoryTargetBytes,
         Double memoryTargetPct,
+        long configVersion,
         long heldBytes,
         Long systemUsedBytes,
         Double systemUsedPct,

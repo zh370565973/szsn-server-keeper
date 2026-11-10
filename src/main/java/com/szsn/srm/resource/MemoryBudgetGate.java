@@ -57,7 +57,7 @@ public final class MemoryBudgetGate {
         MemoryBudget.Result budget = currentBudget();
         long allowedTotal = Math.addExact(allocator.heldBytes(), budget.additionalBytes());
         if (requestedBytes > allowedTotal) {
-            throw exceeded(requestedBytes, budget);
+            throw exceeded(requestedBytes, allocator.heldBytes(), budget);
         }
         return budget;
     }
@@ -78,20 +78,25 @@ public final class MemoryBudgetGate {
         long need = targetBytes - held;
         MemoryBudget.Result budget = currentBudget();
         if (need > budget.additionalBytes()) {
-            throw exceeded(targetBytes, budget);
+            throw exceeded(targetBytes, held, budget);
         }
         return allocator.grow(need);
     }
 
     public Map<String, Object> budgetView() {
         MemoryBudget.Result budget = currentBudget();
+        long held = allocator.heldBytes();
+        long additional = budget.additionalBytes();
         Map<String, Object> view = new LinkedHashMap<>();
-        view.put("additionalBytes", budget.additionalBytes());
+        view.put("additionalBytes", additional);
         view.put("systemReserveBytes", budget.systemReserveBytes());
         view.put("heapReserveBytes", budget.heapReserveBytes());
         view.put("loadCapBytes", budget.loadCapBytes());
-        view.put("heldBytes", allocator.heldBytes());
+        view.put("heldBytes", held);
+        // 可输入的固定容量最大值（已按 4MiB 对齐），超限须禁止提交，不能静默改小
+        view.put("maxAllowedBytes", held + additional);
         view.put("taskCapBytes", taskCapBytes);
+        view.put("blockBytes", Units.BLOCK);
         view.put("limitingFactors", budget.limitingFactors());
         return view;
     }
@@ -121,10 +126,11 @@ public final class MemoryBudgetGate {
         return sample;
     }
 
-    private static ApiException exceeded(long requestedBytes, MemoryBudget.Result budget) {
+    private static ApiException exceeded(long requestedBytes, long heldBytes, MemoryBudget.Result budget) {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("requestedBytes", requestedBytes);
         details.put("allowedAdditionalBytes", budget.additionalBytes());
+        details.put("maxAllowedBytes", heldBytes + budget.additionalBytes());
         details.put("limitingFactors", List.copyOf(budget.limitingFactors()));
         return new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, BUDGET_EXCEEDED,
                 "固定内存目标超过当前预算", details);

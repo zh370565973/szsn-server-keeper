@@ -50,8 +50,8 @@ public class SystemController {
         body.put("dataDiskFreeRatio", report.dataDiskFreeRatio());
         body.put("storageHealthy", storageHealth.healthy());
         body.put("storageFault", storageHealth.fault());
-        body.put("phase", "M2");
-        body.put("loadEngine", "CPU");
+        body.put("phase", "M3");
+        body.put("loadEngine", "CPU_MEMORY");
         body.put("acceptance", "开发验证通过，目标环境待验收");
         return Bodies.ok(body);
     }

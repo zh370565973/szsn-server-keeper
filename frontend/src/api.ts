@@ -1,7 +1,13 @@
 export interface ApiErrorBody {
   code?: string
   message?: string
-  details?: { reasons?: string[] }
+  details?: {
+    reasons?: string[]
+    requestedBytes?: number
+    allowedAdditionalBytes?: number
+    maxAllowedBytes?: number
+    limitingFactors?: string[]
+  }
 }
 
 export interface HostView {
@@ -135,6 +141,11 @@ export interface MemoryLoadView {
   rssBytes?: number | null
   paused?: boolean
   memoryMode?: string | null
+  memoryTargetBytes?: number | null
+  memoryTargetPct?: number | null
+  configVersion?: number | null
+  systemUsedPct?: number | null
+  targetLimited?: boolean
   limitedReasons?: string[]
 }
 
@@ -166,6 +177,9 @@ export interface ResourceStatus {
   budget?: {
     heldBytes?: number
     additionalBytes?: number
+    maxAllowedBytes?: number
+    blockBytes?: number
+    taskCapBytes?: number
     limitingFactors?: string[]
   }
 }

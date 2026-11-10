@@ -96,21 +96,38 @@ class CpuControlServiceTest {
     }
 
     @Test
-    void memoryWithinBudgetStillUnavailableWithoutSideEffects() throws Exception {
+    void memoryWithinBudgetStartsAndExposesMaxAllowedWithoutShrinkingOverBudget() throws Exception {
         Harness harness = harness(true);
         engine = harness.engine;
+        memoryEngine = harness.memoryEngine;
         service = harness.service;
         harness.switchOn();
         fillAmpleMemoryMonitor(harness.store, harness.clock, 12);
-        long heldBefore = harness.memory.heldBytes();
-        ApiException exception = assertThrows(ApiException.class,
-                () -> harness.service.start(UUID.randomUUID().toString(), """
-                        {"resourceMode":"MEMORY","memoryMode":"EXTRA_BYTES","memoryTargetBytes":4194304,"runMode":"CONTINUOUS"}
-                        """));
-        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, exception.status());
-        assertEquals("CONTROL_UNAVAILABLE", exception.code());
-        assertEquals(heldBefore, harness.memory.heldBytes());
-        assertFalse(harness.sessions.active().isPresent());
+
+        Map<String, Object> accepted = harness.service.start(UUID.randomUUID().toString(), """
+                {"resourceMode":"MEMORY","memoryMode":"EXTRA_BYTES","memoryTargetBytes":4194304,"runMode":"CONTINUOUS"}
+                """);
+        assertEquals(Boolean.FALSE, accepted.get("engineCompleted"));
+        assertEquals((String) accepted.get("executionId"), harness.memoryEngine.view().executionId());
+        assertNull(harness.engine.view().executionId());
+
+        Map<String, Object> budget = harness.service.memoryBudgetView();
+        assertTrue(budget.containsKey("maxAllowedBytes"));
+        long maxAllowed = ((Number) budget.get("maxAllowedBytes")).longValue();
+        assertTrue(maxAllowed >= 4L * 1024 * 1024);
+        long beforeTarget = harness.memoryEngine.view().memoryTargetBytes();
+
+        ApiException over = assertThrows(ApiException.class,
+                () -> harness.service.updateTargets((String) accepted.get("executionId"),
+                        "{\"memoryTargetBytes\":1073741824,\"expectedVersion\":"
+                                + harness.memoryEngine.view().configVersion() + "}"));
+        assertEquals(MemoryBudgetGate.BUDGET_EXCEEDED, over.code());
+        assertTrue(over.details().containsKey("maxAllowedBytes"));
+        assertEquals(beforeTarget, harness.memoryEngine.view().memoryTargetBytes());
+
+        harness.sessions.requestStop((String) accepted.get("executionId"), StopKind.USER);
+        harness.memoryEngine.stopAndClear(MemoryEngine.CLEAR_TIMEOUT_MS, true);
+        assertNull(harness.memoryEngine.view().executionId());
     }
 
     @Test
@@ -123,13 +140,35 @@ class CpuControlServiceTest {
                 {"resourceMode":"MEMORY","memoryMode":"EXTRA_BYTES","memoryTargetBytes":4194304,"runMode":"CONTINUOUS"}
                 """);
         assertEquals(Boolean.FALSE, result.get("sideEffect"));
-        assertEquals(Boolean.FALSE, result.get("ok"));
         assertTrue(result.get("budget") instanceof Map<?, ?>);
         @SuppressWarnings("unchecked")
         Map<String, Object> budget = (Map<String, Object>) result.get("budget");
         assertTrue(((Number) budget.get("additionalBytes")).longValue() >= 4L * 1024 * 1024);
+        assertTrue(((Number) budget.get("maxAllowedBytes")).longValue() >= 4L * 1024 * 1024);
         assertFalse(harness.sessions.active().isPresent());
         assertEquals(0, harness.memory.heldBytes());
+    }
+
+    @Test
+    void memoryOverBudgetPreflightShowsMaxAndStartRejectedWithoutShrinking() throws Exception {
+        Harness harness = harness(true);
+        engine = harness.engine;
+        service = harness.service;
+        harness.switchOn();
+        fillAmpleMemoryMonitor(harness.store, harness.clock, 12);
+        String huge = """
+                {"resourceMode":"MEMORY","memoryMode":"EXTRA_BYTES","memoryTargetBytes":1073741824,"runMode":"CONTINUOUS"}
+                """;
+        Map<String, Object> preflight = harness.service.preflight(huge);
+        assertEquals(Boolean.FALSE, preflight.get("ok"));
+        assertTrue(((Number) preflight.get("maxAllowedBytes")).longValue() > 0);
+        long heldBefore = harness.memory.heldBytes();
+        ApiException exception = assertThrows(ApiException.class,
+                () -> harness.service.start(UUID.randomUUID().toString(), huge));
+        assertEquals(MemoryBudgetGate.BUDGET_EXCEEDED, exception.code());
+        assertTrue(exception.details().containsKey("maxAllowedBytes"));
+        assertEquals(heldBefore, harness.memory.heldBytes());
+        assertFalse(harness.sessions.active().isPresent());
     }
 
     @Test

@@ -5,8 +5,10 @@ import com.szsn.srm.safety.SafetySignal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import org.springframework.http.HttpStatus;
@@ -62,12 +64,18 @@ public final class MemoryEngine {
     /**
      * 启动 EXTRA_BYTES。新目标须通过固定容量预算门闸（超限 422 且不分配）。
      * 单独内存会话时推进状态机；联合控制由 CPU 侧持有会话时传 {@code manageSession=false}。
+     * 单测默认不启自动控制，生产路径传 {@code autoControl=true}。
      */
     public MemoryEngineView startExtraBytes(SessionClaim claim, long targetBytes) {
-        return startExtraBytes(claim, targetBytes, true);
+        return startExtraBytes(claim, targetBytes, true, false);
     }
 
     public MemoryEngineView startExtraBytes(SessionClaim claim, long targetBytes, boolean manageSession) {
+        return startExtraBytes(claim, targetBytes, manageSession, false);
+    }
+
+    public MemoryEngineView startExtraBytes(
+            SessionClaim claim, long targetBytes, boolean manageSession, boolean autoControl) {
         ChunkedMemoryGrower.requireAligned(targetBytes);
         if (targetBytes < ChunkedMemoryGrower.CHUNK_BYTES) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetBytes 不合法");
@@ -83,6 +91,9 @@ public final class MemoryEngine {
                 sessions.markRunning(claim.executionId());
             }
             reportHeld(claim.executionId(), allocator.heldBytes());
+            if (autoControl) {
+                startControl(created);
+            }
         } catch (RuntimeException exception) {
             state.compareAndSet(created, null);
             throw exception;
@@ -94,10 +105,15 @@ public final class MemoryEngine {
      * 启动 SYSTEM_PERCENT。允许在预算受限下启动，运行中显示 TARGET_LIMITED。
      */
     public MemoryEngineView startSystemPercent(SessionClaim claim, double targetPct) {
-        return startSystemPercent(claim, targetPct, true);
+        return startSystemPercent(claim, targetPct, true, false);
     }
 
     public MemoryEngineView startSystemPercent(SessionClaim claim, double targetPct, boolean manageSession) {
+        return startSystemPercent(claim, targetPct, manageSession, false);
+    }
+
+    public MemoryEngineView startSystemPercent(
+            SessionClaim claim, double targetPct, boolean manageSession, boolean autoControl) {
         requirePercent(targetPct);
         requireClaim(claim);
         State created = State.systemPercent(claim, targetPct);
@@ -109,11 +125,58 @@ public final class MemoryEngine {
                 sessions.markRunning(claim.executionId());
             }
             reportHeld(claim.executionId(), allocator.heldBytes());
+            if (autoControl) {
+                startControl(created);
+            }
         } catch (RuntimeException exception) {
             state.compareAndSet(created, null);
             throw exception;
         }
         return created.view(allocator.heldBytes(), null, null, false);
+    }
+
+    /**
+     * 运行中或暂停时改目标。先抬版本再应用；版本冲突返回 409。
+     * EXTRA_BYTES 增大目标须通过预算门闸，超限 422 且不改版本、不静默改小。
+     */
+    public MemoryEngineView updateTarget(long expectedVersion, Long memoryTargetBytes, Double memoryTargetPct) {
+        State current = requireActive();
+        long from = current.configVersion.get();
+        if (from != expectedVersion) {
+            throw new ApiException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "配置版本不匹配",
+                    java.util.Map.of("expectedVersion", expectedVersion, "actualVersion", from));
+        }
+        if (MODE_EXTRA_BYTES.equals(current.mode)) {
+            if (memoryTargetBytes == null) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetBytes 不合法");
+            }
+            ChunkedMemoryGrower.requireAligned(memoryTargetBytes);
+            if (memoryTargetBytes < ChunkedMemoryGrower.CHUNK_BYTES) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetBytes 不合法");
+            }
+            if (memoryTargetBytes > current.targetBytes.get()) {
+                budget.requireFixedCapacity(memoryTargetBytes);
+            }
+            if (!current.configVersion.compareAndSet(from, from + 1)) {
+                throw new ApiException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "配置版本不匹配",
+                        java.util.Map.of("expectedVersion", expectedVersion, "actualVersion", current.configVersion.get()));
+            }
+            current.targetBytes.set(memoryTargetBytes);
+        } else if (MODE_SYSTEM_PERCENT.equals(current.mode)) {
+            if (memoryTargetPct == null) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetPct 不合法");
+            }
+            requirePercent(memoryTargetPct);
+            if (!current.configVersion.compareAndSet(from, from + 1)) {
+                throw new ApiException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "配置版本不匹配",
+                        java.util.Map.of("expectedVersion", expectedVersion, "actualVersion", current.configVersion.get()));
+            }
+            current.targetPct.set(memoryTargetPct);
+        } else {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryMode 不合法");
+        }
+        MemorySample sample = samples.sample();
+        return current.view(allocator.heldBytes(), systemUsedBytes(sample), systemUsedPct(sample), cooldownActive(current));
     }
 
     /**
@@ -199,9 +262,16 @@ public final class MemoryEngine {
         String executionId = current == null ? null : current.claim.executionId();
         if (current != null) {
             current.paused.set(true);
+            wake(current);
         }
         clearHeld(executionId);
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0, timeoutMs));
+        if (current != null && current.control != null) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining > 0) {
+                current.control.join(TimeUnit.NANOSECONDS.toMillis(remaining), (int) (remaining % 1_000_000L));
+            }
+        }
         while (allocator.heldBytes() != 0) {
             long remaining = deadline - System.nanoTime();
             if (remaining <= 0) {
@@ -232,9 +302,10 @@ public final class MemoryEngine {
         }
         WorkerPermit permit = current.claim.permit();
         if (!permit.valid()) {
+            // 仅清引用；状态留给 stopAndClear/detach 释放，避免 MEMORY-only 槽位泄漏
             clearHeld(current.claim.executionId());
-            state.compareAndSet(current, null);
-            return idleView();
+            MemorySample sample = samples.sample();
+            return current.view(allocator.heldBytes(), systemUsedBytes(sample), systemUsedPct(sample), false);
         }
         if (current.paused.get()) {
             MemorySample sample = samples.sample();
@@ -296,12 +367,13 @@ public final class MemoryEngine {
             return current.view(allocator.heldBytes(), systemUsed, systemPct, false);
         }
         long held = allocator.heldBytes();
-        if (held == current.targetBytes) {
+        long target = current.targetBytes.get();
+        if (held == target) {
             current.setLimited(List.of(), false, false);
             reportHeld(current.claim.executionId(), held);
             return current.view(held, systemUsed, systemPct, false);
         }
-        ChunkedMemoryGrower.GrowResult result = grower.growToward(current.targetBytes, permit);
+        ChunkedMemoryGrower.GrowResult result = grower.growToward(target, permit);
         reportHeld(current.claim.executionId(), result.heldBytes());
         if (result.reason() == ChunkedMemoryGrower.StopReason.BUDGET_EXHAUSTED) {
             reasons.add(SystemPercentPlanner.TARGET_LIMITED);
@@ -316,10 +388,6 @@ public final class MemoryEngine {
             current.setLimited(reasons, false, false);
         } else {
             current.setLimited(List.of(), false, false);
-        }
-        if (!permit.valid()) {
-            clearHeld(current.claim.executionId());
-            state.compareAndSet(current, null);
         }
         return current.view(allocator.heldBytes(), systemUsed, systemPct, false);
     }
@@ -346,7 +414,7 @@ public final class MemoryEngine {
         MemoryBudget.Result budgetNow = budget.currentBudget();
         boolean cooling = cooldownActive(current);
         SystemPercentPlanner.Decision decision = SystemPercentPlanner.decide(
-                current.targetPct,
+                current.targetPct.get(),
                 sample.memTotalBytes(),
                 sample.memAvailableBytes(),
                 allocator.heldBytes(),
@@ -464,17 +532,83 @@ public final class MemoryEngine {
         return used * 100.0 / sample.memTotalBytes();
     }
 
+    private void startControl(State created) {
+        Thread control = namedFactory("srm-mem-ctrl").newThread(() -> controlLoop(created));
+        created.control = control;
+        control.start();
+    }
+
+    private void controlLoop(State current) {
+        try {
+            while (current.claim.permit().valid() && !Thread.currentThread().isInterrupted()) {
+                if (state.get() != current) {
+                    break;
+                }
+                controlTick();
+                if (!park(current, CONTROL_PERIOD_MS)) {
+                    break;
+                }
+            }
+        } finally {
+            clearHeld(current.claim.executionId());
+        }
+    }
+
+    private boolean park(State current, long millis) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
+        try {
+            while (current.claim.permit().valid()) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) {
+                    return true;
+                }
+                synchronized (current.wake) {
+                    if (!current.claim.permit().valid()) {
+                        return false;
+                    }
+                    long waitMs = TimeUnit.NANOSECONDS.toMillis(remaining);
+                    int waitNs = (int) (remaining % 1_000_000L);
+                    if (waitMs > 0 || waitNs > 0) {
+                        current.wake.wait(Math.min(waitMs, 50L), waitNs);
+                    }
+                }
+            }
+            return false;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private static void wake(State current) {
+        synchronized (current.wake) {
+            current.wake.notifyAll();
+        }
+    }
+
+    private static ThreadFactory namedFactory(String prefix) {
+        AtomicLong sequence = new AtomicLong();
+        return runnable -> {
+            Thread thread = new Thread(runnable, prefix + "-" + sequence.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
+    }
+
     private static MemoryEngineView idleView() {
         return new MemoryEngineView(
-                null, false, false, null, null, null, 0L, null, null, false, false, false, List.of());
+                null, false, false, null, null, null, 0L, 0L, null, null, false, false, false, List.of());
     }
 
     private static final class State {
         private final SessionClaim claim;
         private final String mode;
-        private final long targetBytes;
-        private final double targetPct;
+        private final AtomicLong targetBytes;
+        private final AtomicReference<Double> targetPct;
+        private final AtomicLong configVersion = new AtomicLong(1);
         private final AtomicBoolean paused = new AtomicBoolean();
+        private final Object wake = new Object();
+        private volatile Thread control;
         private volatile Long lastReleaseAtMs;
         private volatile List<String> limitedReasons = List.of();
         private volatile boolean systemAboveTarget;
@@ -483,8 +617,8 @@ public final class MemoryEngine {
         private State(SessionClaim claim, String mode, long targetBytes, double targetPct) {
             this.claim = claim;
             this.mode = mode;
-            this.targetBytes = targetBytes;
-            this.targetPct = targetPct;
+            this.targetBytes = new AtomicLong(targetBytes);
+            this.targetPct = new AtomicReference<>(targetPct);
         }
 
         static State extraBytes(SessionClaim claim, long targetBytes) {
@@ -507,8 +641,9 @@ public final class MemoryEngine {
                     true,
                     paused.get(),
                     mode,
-                    MODE_EXTRA_BYTES.equals(mode) ? targetBytes : null,
-                    MODE_SYSTEM_PERCENT.equals(mode) ? targetPct : null,
+                    MODE_EXTRA_BYTES.equals(mode) ? targetBytes.get() : null,
+                    MODE_SYSTEM_PERCENT.equals(mode) ? targetPct.get() : null,
+                    configVersion.get(),
                     held,
                     systemUsed,
                     systemPct,

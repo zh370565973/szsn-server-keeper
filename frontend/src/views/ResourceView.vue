@@ -5,42 +5,83 @@ import { ApiError, api, type ResourceStatus } from '../api'
 import { formatBytes, formatPercent } from '../format'
 import { monitor, refreshResource } from '../monitor'
 
+const MIB = 1024 * 1024
+const BLOCK_MIB = 4
+
 const status = ref<ResourceStatus>()
 const error = ref('')
 const busy = ref(false)
 const targetPct = ref(30)
+const memoryMode = ref<'EXTRA_BYTES' | 'SYSTEM_PERCENT'>('EXTRA_BYTES')
+const memoryTargetMib = ref(256)
+const memoryTargetPct = ref(50)
 const durationSeconds = ref(300)
 const runMode = ref<'FINITE' | 'CONTINUOUS'>('FINITE')
-const tab = ref('cpu')
+const tab = ref<'cpu' | 'memory' | 'combined'>('cpu')
 let timer: number | undefined
 
 const reasons = computed(() => status.value?.controlDisabledReasons ?? [])
 const reasonText = computed(() => reasons.value.join('；') || '负载控制不可用')
 const cpu = computed(() => status.value?.cpu)
 const memory = computed(() => status.value?.memory)
+const budget = computed(() => status.value?.budget)
 const active = computed(() => status.value?.activeExecution)
 const snapshot = computed(() => monitor.snapshot)
 const capable = computed(() => !!status.value?.controlCapable)
 const switchOn = computed(() => status.value?.controlSwitch === 'ON')
 const latched = computed(() => !!status.value?.emergencyLatched)
 const hasSession = computed(() => !!active.value)
-const cpuTab = computed(() => tab.value === 'cpu')
-const memoryBlocked = '内存引擎尚未开放'
+
+const maxAllowedBytes = computed(() => {
+  const value = budget.value?.maxAllowedBytes
+  if (value != null) {
+    return value
+  }
+  const held = budget.value?.heldBytes ?? 0
+  const additional = budget.value?.additionalBytes ?? 0
+  return held + additional
+})
+const maxAllowedMib = computed(() => Math.floor(maxAllowedBytes.value / MIB))
+const requestedMemoryBytes = computed(() => Math.round(memoryTargetMib.value) * MIB)
+const overBudget = computed(
+  () => memoryMode.value === 'EXTRA_BYTES' && requestedMemoryBytes.value > maxAllowedBytes.value
+)
+const alignmentOk = computed(
+  () => memoryMode.value !== 'EXTRA_BYTES' || Math.round(memoryTargetMib.value) % BLOCK_MIB === 0
+)
 
 const canStart = computed(() =>
-  cpuTab.value && capable.value && switchOn.value && !latched.value && !hasSession.value && !busy.value)
-const canPause = computed(() =>
-  cpuTab.value && hasSession.value && active.value?.status === 'RUNNING' && !busy.value)
-const canResume = computed(() =>
-  cpuTab.value && hasSession.value && active.value?.status === 'PAUSED' && !busy.value)
-const canStop = computed(() =>
-  cpuTab.value && hasSession.value && !['STOPPED', 'COMPLETED', 'FAILED', 'INTERRUPTED'].includes(active.value?.status ?? '') && !busy.value)
+  capable.value &&
+  switchOn.value &&
+  !latched.value &&
+  !hasSession.value &&
+  !busy.value &&
+  (tab.value === 'cpu' || (alignmentOk.value && !overBudget.value))
+)
+const canPause = computed(() => hasSession.value && active.value?.status === 'RUNNING' && !busy.value)
+const canResume = computed(() => hasSession.value && active.value?.status === 'PAUSED' && !busy.value)
+const canStop = computed(
+  () =>
+    hasSession.value &&
+    !['STOPPED', 'COMPLETED', 'FAILED', 'INTERRUPTED'].includes(active.value?.status ?? '') &&
+    !busy.value
+)
 const canEditTarget = computed(() =>
-  cpuTab.value && hasSession.value && ['RUNNING', 'PAUSED'].includes(active.value?.status ?? '') && !busy.value)
+  hasSession.value && ['RUNNING', 'PAUSED'].includes(active.value?.status ?? '') && !busy.value
+)
 
 const limitedText = computed(() => {
-  const items = cpu.value?.limitedReasons ?? active.value?.limitedReasons ?? []
-  return items.length ? items.join('；') : '无'
+  const cpuReasons = cpu.value?.limitedReasons ?? []
+  const memReasons = memory.value?.limitedReasons ?? active.value?.limitedReasons ?? []
+  const items = [...cpuReasons, ...memReasons]
+  return items.length ? Array.from(new Set(items)).join('；') : '无'
+})
+
+const configVersion = computed(() => {
+  if (tab.value === 'memory') {
+    return memory.value?.configVersion ?? active.value?.configVersion ?? null
+  }
+  return cpu.value?.configVersion ?? memory.value?.configVersion ?? active.value?.configVersion ?? null
 })
 
 onMounted(async () => {
@@ -69,10 +110,19 @@ async function reload() {
     status.value = await api<ResourceStatus>('/resource/status')
     monitor.resource = status.value
     error.value = ''
-    if (status.value.cpu?.targetPct != null && !busy.value && !hasSession.value) {
-      // 空闲时不覆盖用户输入
-    } else if (status.value.cpu?.targetPct != null && hasSession.value) {
-      targetPct.value = status.value.cpu.targetPct
+    if (hasSession.value) {
+      if (status.value.cpu?.targetPct != null) {
+        targetPct.value = status.value.cpu.targetPct
+      }
+      if (status.value.memory?.memoryMode) {
+        memoryMode.value = status.value.memory.memoryMode as 'EXTRA_BYTES' | 'SYSTEM_PERCENT'
+      }
+      if (status.value.memory?.memoryTargetBytes != null) {
+        memoryTargetMib.value = Math.round(status.value.memory.memoryTargetBytes / MIB)
+      }
+      if (status.value.memory?.memoryTargetPct != null) {
+        memoryTargetPct.value = status.value.memory.memoryTargetPct
+      }
     }
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : '无法读取控制状态'
@@ -83,24 +133,55 @@ function newKey() {
   return crypto.randomUUID()
 }
 
-async function startCpu() {
+function buildBody(): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    runMode: runMode.value
+  }
+  if (runMode.value === 'FINITE') {
+    body.durationSeconds = durationSeconds.value
+  }
+  if (tab.value === 'cpu') {
+    body.resourceMode = 'CPU'
+    body.cpuTargetPct = targetPct.value
+  } else if (tab.value === 'memory') {
+    body.resourceMode = 'MEMORY'
+    body.memoryMode = memoryMode.value
+    if (memoryMode.value === 'EXTRA_BYTES') {
+      body.memoryTargetBytes = requestedMemoryBytes.value
+    } else {
+      body.memoryTargetPct = memoryTargetPct.value
+    }
+  } else {
+    body.resourceMode = 'COMBINED'
+    body.cpuTargetPct = targetPct.value
+    body.memoryMode = memoryMode.value
+    if (memoryMode.value === 'EXTRA_BYTES') {
+      body.memoryTargetBytes = requestedMemoryBytes.value
+    } else {
+      body.memoryTargetPct = memoryTargetPct.value
+    }
+  }
+  return body
+}
+
+async function start() {
+  if (overBudget.value) {
+    error.value = `固定容量超过当前预算。可输入最大值为 ${maxAllowedMib.value} MiB，请改小后再提交；不会静默改小后启动。`
+    return
+  }
+  if (!alignmentOk.value) {
+    error.value = `固定容量必须是 ${BLOCK_MIB} MiB 的整数倍`
+    return
+  }
   busy.value = true
   error.value = ''
   try {
-    const body: Record<string, unknown> = {
-      resourceMode: 'CPU',
-      cpuTargetPct: targetPct.value,
-      runMode: runMode.value
-    }
-    if (runMode.value === 'FINITE') {
-      body.durationSeconds = durationSeconds.value
-    }
     const accepted = await api<{ executionId: string; status: string; engineCompleted?: boolean }>(
       '/executions',
       {
         method: 'POST',
         headers: { 'Idempotency-Key': newKey() },
-        body: JSON.stringify(body)
+        body: JSON.stringify(buildBody())
       }
     )
     message.success(`已受理启动，状态 ${accepted.status}。实际调节以状态为准，不假定已达目标。`)
@@ -162,17 +243,31 @@ async function stop() {
 }
 
 async function applyTarget() {
-  if (!active.value || active.value.configVersion == null) {
+  if (!active.value || configVersion.value == null) {
+    return
+  }
+  if ((tab.value === 'memory' || tab.value === 'combined') && overBudget.value) {
+    error.value = `固定容量超过当前预算。可输入最大值为 ${maxAllowedMib.value} MiB，禁止提交；不会静默改小。`
     return
   }
   busy.value = true
   try {
+    const body: Record<string, unknown> = {
+      expectedVersion: configVersion.value
+    }
+    if (tab.value === 'cpu' || tab.value === 'combined') {
+      body.cpuTargetPct = targetPct.value
+    }
+    if (tab.value === 'memory' || tab.value === 'combined') {
+      if (memoryMode.value === 'EXTRA_BYTES') {
+        body.memoryTargetBytes = requestedMemoryBytes.value
+      } else {
+        body.memoryTargetPct = memoryTargetPct.value
+      }
+    }
     const accepted = await api<{ status: string; version: number }>(`/executions/${active.value.executionId}/targets`, {
       method: 'PATCH',
-      body: JSON.stringify({
-        cpuTargetPct: targetPct.value,
-        expectedVersion: active.value.configVersion
-      })
+      body: JSON.stringify(body)
     })
     message.success(`已受理改目标，版本 ${accepted.version}`)
     await reload()
@@ -186,22 +281,26 @@ async function applyTarget() {
 async function preflight() {
   busy.value = true
   try {
-    const body: Record<string, unknown> = {
-      resourceMode: 'CPU',
-      cpuTargetPct: targetPct.value,
-      runMode: runMode.value
-    }
-    if (runMode.value === 'FINITE') {
-      body.durationSeconds = durationSeconds.value
-    }
-    const result = await api<{ ok: boolean; reasons?: string[]; workerCount?: number }>('/resource/preflight', {
+    const result = await api<{
+      ok: boolean
+      reasons?: string[]
+      workerCount?: number
+      maxAllowedBytes?: number
+      budget?: { maxAllowedBytes?: number }
+    }>('/resource/preflight', {
       method: 'POST',
-      body: JSON.stringify(body)
+      body: JSON.stringify(buildBody())
     })
     if (result.ok) {
-      message.success(`预检通过，预计 Worker ${result.workerCount ?? '-'} 个。预检不预留资源。`)
+      const workers = result.workerCount != null ? `，预计 Worker ${result.workerCount} 个` : ''
+      message.success(`预检通过${workers}。预检不预留资源。`)
     } else {
-      message.warning((result.reasons ?? []).join('；') || '预检未通过')
+      const maxBytes = result.maxAllowedBytes ?? result.budget?.maxAllowedBytes
+      const maxHint =
+        maxBytes != null && overBudget.value
+          ? `可输入最大值 ${Math.floor(maxBytes / MIB)} MiB。`
+          : ''
+      message.warning(`${(result.reasons ?? []).join('；') || '预检未通过'}。${maxHint}`.trim())
     }
   } catch (caught) {
     error.value = describe(caught)
@@ -212,6 +311,11 @@ async function preflight() {
 
 function describe(caught: unknown) {
   if (caught instanceof ApiError) {
+    if (caught.code === 'MEMORY_BUDGET_EXCEEDED') {
+      const maxBytes = Number(caught.details?.maxAllowedBytes)
+      const maxMib = Number.isFinite(maxBytes) ? Math.floor(maxBytes / MIB) : maxAllowedMib.value
+      return `固定内存目标超过当前预算。可输入最大值为 ${maxMib} MiB，请改小后再提交；不会静默改小后启动。`
+    }
     const detailReasons = caught.details?.reasons
     if (detailReasons?.length) {
       return `${caught.message}：${detailReasons.join('；')}`
@@ -229,7 +333,7 @@ function describe(caught: unknown) {
       v-if="!capable"
       type="warning"
       show-icon
-      message="当前环境不可用 CPU 负载控制"
+      message="当前环境不可用负载控制"
       :description="reasonText"
       style="margin-bottom: 12px"
     />
@@ -247,7 +351,9 @@ function describe(caught: unknown) {
         <a-form layout="vertical">
           <a-form-item label="目标 CPU（1–60%）">
             <a-input-number v-model:value="targetPct" :min="1" :max="60" :disabled="busy" style="width: 180px" />
-            <a-button v-if="canEditTarget" style="margin-left: 8px" :loading="busy" @click="applyTarget">应用目标</a-button>
+            <a-button v-if="canEditTarget && tab === 'cpu'" style="margin-left: 8px" :loading="busy" @click="applyTarget">
+              应用目标
+            </a-button>
           </a-form-item>
           <a-form-item label="运行模式">
             <a-radio-group v-model:value="runMode" :disabled="busy || hasSession">
@@ -256,34 +362,137 @@ function describe(caught: unknown) {
             </a-radio-group>
           </a-form-item>
           <a-form-item v-if="runMode === 'FINITE'" label="时长（秒）">
-            <a-input-number v-model:value="durationSeconds" :min="1" :max="86400" :disabled="busy || hasSession" style="width: 180px" />
+            <a-input-number
+              v-model:value="durationSeconds"
+              :min="1"
+              :max="86400"
+              :disabled="busy || hasSession"
+              style="width: 180px"
+            />
           </a-form-item>
         </a-form>
       </a-tab-pane>
+
       <a-tab-pane key="memory" tab="内存">
-        <a-alert type="warning" show-icon :message="memoryBlocked" />
-        <a-form layout="vertical" style="margin-top: 12px">
+        <a-form layout="vertical">
           <a-form-item label="模式">
-            <a-radio-group value="EXTRA_BYTES" disabled>
+            <a-radio-group v-model:value="memoryMode" :disabled="busy || hasSession">
               <a-radio value="EXTRA_BYTES">固定增加</a-radio>
               <a-radio value="SYSTEM_PERCENT">系统占用比例</a-radio>
             </a-radio-group>
+          </a-form-item>
+          <a-form-item v-if="memoryMode === 'EXTRA_BYTES'" label="目标持有（MiB，4 的倍数）">
+            <a-input-number
+              v-model:value="memoryTargetMib"
+              :min="4"
+              :step="4"
+              :disabled="busy"
+              style="width: 180px"
+            />
+            <a-button
+              v-if="canEditTarget && tab === 'memory'"
+              style="margin-left: 8px"
+              :loading="busy"
+              :disabled="overBudget || !alignmentOk"
+              @click="applyTarget"
+            >
+              应用目标
+            </a-button>
+          </a-form-item>
+          <a-form-item v-else label="系统占用目标（1–70%）">
+            <a-input-number v-model:value="memoryTargetPct" :min="1" :max="70" :disabled="busy" style="width: 180px" />
+            <a-button v-if="canEditTarget && tab === 'memory'" style="margin-left: 8px" :loading="busy" @click="applyTarget">
+              应用目标
+            </a-button>
+          </a-form-item>
+          <a-alert
+            v-if="memoryMode === 'EXTRA_BYTES' && overBudget"
+            type="error"
+            show-icon
+            style="margin-bottom: 12px"
+            message="超过当前预算"
+            :description="`可输入最大值为 ${maxAllowedMib} MiB。请改小后再提交；不会静默改小目标后启动。`"
+          />
+          <a-form-item label="运行模式">
+            <a-radio-group v-model:value="runMode" :disabled="busy || hasSession">
+              <a-radio value="FINITE">限时</a-radio>
+              <a-radio value="CONTINUOUS">持续</a-radio>
+            </a-radio-group>
+          </a-form-item>
+          <a-form-item v-if="runMode === 'FINITE'" label="时长（秒）">
+            <a-input-number
+              v-model:value="durationSeconds"
+              :min="1"
+              :max="86400"
+              :disabled="busy || hasSession"
+              style="width: 180px"
+            />
           </a-form-item>
           <p>
             暂停或停止会在 2 秒内清除负载引用并使负载持有归零。这不代表进程驻留内存已下降，系统回收由 JVM 和操作系统决定。
           </p>
         </a-form>
       </a-tab-pane>
+
       <a-tab-pane key="combined" tab="联合">
-        <a-alert type="warning" show-icon message="联合控制需要内存引擎，当前仅开放 CPU" />
+        <a-form layout="vertical">
+          <a-form-item label="目标 CPU（1–60%）">
+            <a-input-number v-model:value="targetPct" :min="1" :max="60" :disabled="busy" style="width: 180px" />
+          </a-form-item>
+          <a-form-item label="内存模式">
+            <a-radio-group v-model:value="memoryMode" :disabled="busy || hasSession">
+              <a-radio value="EXTRA_BYTES">固定增加</a-radio>
+              <a-radio value="SYSTEM_PERCENT">系统占用比例</a-radio>
+            </a-radio-group>
+          </a-form-item>
+          <a-form-item v-if="memoryMode === 'EXTRA_BYTES'" label="目标持有（MiB，4 的倍数）">
+            <a-input-number
+              v-model:value="memoryTargetMib"
+              :min="4"
+              :step="4"
+              :disabled="busy"
+              style="width: 180px"
+            />
+          </a-form-item>
+          <a-form-item v-else label="系统占用目标（1–70%）">
+            <a-input-number v-model:value="memoryTargetPct" :min="1" :max="70" :disabled="busy" style="width: 180px" />
+          </a-form-item>
+          <a-alert
+            v-if="memoryMode === 'EXTRA_BYTES' && overBudget"
+            type="error"
+            show-icon
+            style="margin-bottom: 12px"
+            message="超过当前预算"
+            :description="`可输入最大值为 ${maxAllowedMib} MiB。请改小后再提交；不会静默改小目标后启动。`"
+          />
+          <a-button v-if="canEditTarget" style="margin-bottom: 12px" :loading="busy" :disabled="overBudget" @click="applyTarget">
+            应用目标
+          </a-button>
+          <a-form-item label="运行模式">
+            <a-radio-group v-model:value="runMode" :disabled="busy || hasSession">
+              <a-radio value="FINITE">限时</a-radio>
+              <a-radio value="CONTINUOUS">持续</a-radio>
+            </a-radio-group>
+          </a-form-item>
+          <a-form-item v-if="runMode === 'FINITE'" label="时长（秒）">
+            <a-input-number
+              v-model:value="durationSeconds"
+              :min="1"
+              :max="86400"
+              :disabled="busy || hasSession"
+              style="width: 180px"
+            />
+          </a-form-item>
+          <p>联合会话任一引擎启动失败都会回收两侧，不会静默只跑 CPU 或只跑内存。</p>
+        </a-form>
       </a-tab-pane>
     </a-tabs>
 
     <div class="status-row">
-      <a-tooltip :title="canStart ? '正式启动会重新预检并争用槽位' : reasonText">
-        <a-button type="primary" :disabled="!canStart" :loading="busy" @click="startCpu">启动</a-button>
+      <a-tooltip :title="canStart ? '正式启动会重新预检并争用槽位' : overBudget ? `超过预算，最大 ${maxAllowedMib} MiB` : reasonText">
+        <a-button type="primary" :disabled="!canStart" :loading="busy" @click="start">启动</a-button>
       </a-tooltip>
-      <a-button :disabled="!cpuTab || busy" @click="preflight">预检</a-button>
+      <a-button :disabled="busy" @click="preflight">预检</a-button>
       <a-tooltip :title="canPause ? '' : '仅 RUNNING 可暂停'">
         <a-button :disabled="!canPause" :loading="busy" @click="pause">暂停</a-button>
       </a-tooltip>
@@ -303,10 +512,10 @@ function describe(caught: unknown) {
       <a-descriptions-item label="当前会话">
         {{ active ? `${active.status} / ${active.executionId}` : '无活动会话' }}
       </a-descriptions-item>
-      <a-descriptions-item label="请求目标">
+      <a-descriptions-item label="请求目标 CPU">
         {{ cpu?.targetPct != null ? formatPercent(cpu.targetPct) : '—' }}
       </a-descriptions-item>
-      <a-descriptions-item label="实际值">
+      <a-descriptions-item label="实际 CPU">
         {{ cpu?.actualPct != null ? formatPercent(cpu.actualPct) : '无数据' }}
       </a-descriptions-item>
       <a-descriptions-item label="duty">
@@ -315,8 +524,23 @@ function describe(caught: unknown) {
       <a-descriptions-item label="Worker 数">
         {{ cpu?.workerCount ?? '—' }}
       </a-descriptions-item>
+      <a-descriptions-item label="请求目标内存">
+        <template v-if="memory?.memoryMode === 'EXTRA_BYTES' && memory.memoryTargetBytes != null">
+          {{ formatBytes(memory.memoryTargetBytes) }}
+        </template>
+        <template v-else-if="memory?.memoryMode === 'SYSTEM_PERCENT' && memory.memoryTargetPct != null">
+          {{ formatPercent(memory.memoryTargetPct) }}
+        </template>
+        <template v-else>—</template>
+      </a-descriptions-item>
+      <a-descriptions-item label="当前允许新增">
+        {{ formatBytes(budget?.additionalBytes) }}
+      </a-descriptions-item>
+      <a-descriptions-item label="可输入最大值">
+        {{ formatBytes(maxAllowedBytes) }}
+      </a-descriptions-item>
       <a-descriptions-item label="受限原因">{{ limitedText }}</a-descriptions-item>
-      <a-descriptions-item label="配置版本">{{ cpu?.configVersion ?? '—' }}</a-descriptions-item>
+      <a-descriptions-item label="配置版本">{{ configVersion ?? '—' }}</a-descriptions-item>
       <a-descriptions-item label="负载持有">
         {{ formatBytes(memory?.heldBytes ?? active?.heldBytes ?? 0) }}
       </a-descriptions-item>

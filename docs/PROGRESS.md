@@ -1,6 +1,6 @@
 # 进度
 
-阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M3-01 至 M3-05 已完成；M3-06 假分配器覆盖 AT-05 至 AT-08，有限容量真实分配仍待获准环境。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
+阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成。M3-01 至 M3-05、M3-07 已完成；M3-06 假分配器覆盖 AT-05 至 AT-08，有限容量真实分配仍待获准环境。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
 
 ## 已完成
 
@@ -188,6 +188,15 @@ CPU 引擎复用已有 `CpuDutyCalculator`（含安全归零、禁止增长、�
 
 - `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。126 个测试，0 失败。其中 `M3AcceptanceTest` 5 个全部通过。
 
+## M3-07 资源页内存和联合标签
+
+开放 MEMORY / COMBINED 资源页与 HTTP 启动。`budget.maxAllowedBytes` 为固定容量可输入最大值；超预算时页面展示该值并禁止提交，后端仍返回 422 / `MEMORY_BUDGET_EXCEEDED`（含 maxAllowedBytes），不静默改小目标后启动。内存引擎增加自动控制循环与运行中改目标；MEMORY-only 暂停/停止自行确认槽位退出。`loadEngine=CPU_MEMORY`。仍不分配真实 `byte[]`。
+
+2026-11-10，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。127 个测试，0 失败。其中 `CpuControlServiceTest` 9 个（新增 MEMORY 预算内启动、超预算预检展示最大值、改目标超限不改小）。
+- `npm run build`（frontend）：成功。资源页内存/联合标签可用；超预算红条显示可输入最大值并禁用启动。
+
 ## 下一阶段
 
-M3-07：资源页内存和联合标签可用。M3-06 真实有限容量分配与 M2-09 / AT-03 仅在获准测试环境执行。
+M4-01 依赖 M3-06（待验收）。M3-06 真实有限容量分配与 M2-09 / AT-03 仅在获准测试环境执行。
