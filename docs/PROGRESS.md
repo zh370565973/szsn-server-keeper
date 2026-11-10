@@ -1,6 +1,6 @@
 # 进度
 
-阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M3-01 已接入假分配器与三重预算。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
+阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M3-01 / M3-02 已完成（假分配器、三重预算、4MiB 分块与 32MiB/s 限速）。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
 
 ## 已完成
 
@@ -140,6 +140,14 @@ CPU 引擎复用已有 `CpuDutyCalculator`（含安全归零、禁止增长、�
 
 - `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。90 个测试，0 失败。其中 `MemoryBudgetGateTest` 5 个，覆盖超预算 422 无增长、预算内假持有、增量超限、减目标清计数、缺样本零预算；`CpuControlServiceTest` 增补超预算 422、预算内仍 503、内存预检暴露预算。
 
+## M3-02 4MiB 分块、逐块检查和 32MiB/s 限速
+
+`ChunkedMemoryGrower` 按 `Units.BLOCK`（4 MiB）增长假持有量，不分配真实 `byte[]`。每块分配前复核：Worker 停止标志/generation、`forbidMemoryGrowth`、样本时效（`ageMs > 3s` 或缺失视为过期）、最新三重预算是否至少够一块。块间按 32 MiB/s 限速（块间隔 125ms），可注入时钟与 sleeper。减少目标立即释放，不限速。目标必须是 4 MiB 整数倍。公开 MEMORY 启动仍 503（模式与联合控制留给后续任务）。
+
+2026-11-10，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。98 个测试，0 失败。其中 `ChunkedMemoryGrowerTest` 8 个，覆盖分块限速、停止标志中断、预算耗尽停增、样本过期、缺 age、禁止增长、减目标立即释放、非对齐拒绝。
+
 ## 下一阶段
 
-M3-02：4MiB 分块、逐块检查和 32MiB/s 限速。M2-09 / AT-03 仅在获准测试环境、基线 CPU 低于 10% 时执行。
+M3-03：EXTRA_BYTES 与 SYSTEM_PERCENT。M2-09 / AT-03 仅在获准测试环境、基线 CPU 低于 10% 时执行。

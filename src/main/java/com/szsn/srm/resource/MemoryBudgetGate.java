@@ -10,7 +10,8 @@ import org.springframework.http.HttpStatus;
 
 /**
  * 假分配器与三重预算的接入点。固定容量（EXTRA_BYTES）超过当前可新增预算时返回 422，
- * 且不改变持有量。不实现分块限速与 SYSTEM_PERCENT。
+ * 且不改变持有量。一次性 {@link #growTo} 供准入测试；生产增长走 {@link ChunkedMemoryGrower}。
+ * 不实现 SYSTEM_PERCENT。
  */
 public final class MemoryBudgetGate {
     public static final String BUDGET_EXCEEDED = "MEMORY_BUDGET_EXCEEDED";
@@ -63,8 +64,8 @@ public final class MemoryBudgetGate {
     }
 
     /**
-     * 在预算内把假持有量调到目标。超预算抛 422 且不改持有量；减少目标只减计数。
-     * 本任务一次调到位，分块与限速留给后续任务。
+     * 在预算内把假持有量一次调到目标。超预算抛 422 且不改持有量；减少目标只减计数。
+     * 分块限速增长请用 {@link ChunkedMemoryGrower}。
      */
     public long growTo(long targetBytes) {
         requireFixedCapacity(targetBytes);

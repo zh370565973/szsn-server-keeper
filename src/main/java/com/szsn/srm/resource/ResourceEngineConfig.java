@@ -32,8 +32,8 @@ public class ResourceEngineConfig {
     }
 
     @Bean
-    MemoryBudgetGate memoryBudgetGate(MemoryAllocator allocator, SnapshotStore store) {
-        MemorySampleSource samples = () -> {
+    MemorySampleSource memorySampleSource(SnapshotStore store) {
+        return () -> {
             MetricSnapshot snapshot = store.latest();
             if (snapshot == null) {
                 return null;
@@ -44,8 +44,19 @@ public class ResourceEngineConfig {
                     memory == null ? null : memory.totalBytes(),
                     memory == null ? null : memory.availableBytes(),
                     jvm == null ? null : jvm.heapMaxBytes(),
-                    jvm == null ? null : jvm.heapUsedBytes());
+                    jvm == null ? null : jvm.heapUsedBytes(),
+                    snapshot.ageMs());
         };
-        return new MemoryBudgetGate(allocator, samples, Units.DEFAULT_TASK_CAP);
+    }
+
+    @Bean
+    MemoryBudgetGate memoryBudgetGate(MemoryAllocator allocator, MemorySampleSource memorySampleSource) {
+        return new MemoryBudgetGate(allocator, memorySampleSource, Units.DEFAULT_TASK_CAP);
+    }
+
+    @Bean
+    ChunkedMemoryGrower chunkedMemoryGrower(
+            MemoryAllocator allocator, MemoryBudgetGate gate, MemorySampleSource memorySampleSource) {
+        return new ChunkedMemoryGrower(allocator, gate, memorySampleSource);
     }
 }

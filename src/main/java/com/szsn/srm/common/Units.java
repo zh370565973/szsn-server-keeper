@@ -8,6 +8,8 @@ public final class Units {
     public static final long GUARD = 64L * MIB;
     public static final long DEFAULT_TASK_CAP = 512L * MIB;
     public static final long DISK_FLOOR = 256L * MIB;
+    /** 内存负载增长上限（PRD：32 MiB/s）。 */
+    public static final long MEMORY_GROWTH_BYTES_PER_SEC = 32L * MIB;
 
     private Units() {
     }

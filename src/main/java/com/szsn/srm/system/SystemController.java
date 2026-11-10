@@ -65,7 +65,7 @@ public class SystemController {
         thresholds.put("cpuHardMaxPct", 70);
         thresholds.put("cpuDeadbandPp", 3);
         thresholds.put("memoryBlockBytes", Units.BLOCK);
-        thresholds.put("memoryGrowthBytesPerSec", 32L * Units.MIB);
+        thresholds.put("memoryGrowthBytesPerSec", Units.MEMORY_GROWTH_BYTES_PER_SEC);
         thresholds.put("memoryTaskCapBytes", Units.DEFAULT_TASK_CAP);
         thresholds.put("systemMemoryTargetDefaultPct", 50);
         thresholds.put("systemReserve", "max(总内存×20%, 1GiB)");
