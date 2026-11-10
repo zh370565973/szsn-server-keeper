@@ -3,7 +3,7 @@ package com.szsn.srm.task;
 import java.util.List;
 
 /**
- * 已保存的定时计划。没有到期扫描，{@code nextFireAt} 只是按当前规则算出的下一次时间。
+ * 已保存的定时计划。{@code nextFireAt} 是下一次触发时间，到期扫描不在这个对象里。
  */
 public record ScheduleView(
         String id,

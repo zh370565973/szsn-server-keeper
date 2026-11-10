@@ -183,6 +183,80 @@ public class CpuControlService implements DisposableBean {
         return executionAccepted(started.executionId(), started.status().name(), started.version(), started.replay());
     }
 
+    /**
+     * 调度器已经提交带计划编号的 STARTING 和配置快照之后才调用。
+     * 预检不通过时抛出，不领取槽位，也不启动 CPU 或内存引擎。
+     */
+    public void launchScheduled(String executionId, String snapshotJson) {
+        if (executionId == null || executionId.isBlank()) {
+            throw new IllegalArgumentException("执行编号不能为空");
+        }
+        JsonNode preview = readConfig(snapshotJson);
+        String mode = text(preview, "resourceMode");
+        if (!"CPU".equals(mode) && !"MEMORY".equals(mode) && !"COMBINED".equals(mode)) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "resourceMode 不合法");
+        }
+        Double cpuTarget = null;
+        String memoryMode = null;
+        Long memoryTargetBytes = null;
+        Double memoryTargetPct = null;
+        if (!"MEMORY".equals(mode)) {
+            cpuTarget = requireCpuTarget(preview);
+        }
+        if (!"CPU".equals(mode)) {
+            memoryMode = text(preview, "memoryMode");
+            if (MemoryEngine.MODE_EXTRA_BYTES.equals(memoryMode)) {
+                memoryTargetBytes = requireMemoryTargetBytes(preview);
+                memoryBudget.requireFixedCapacity(memoryTargetBytes);
+            } else if (MemoryEngine.MODE_SYSTEM_PERCENT.equals(memoryMode)) {
+                memoryTargetPct = requireMemoryTargetPct(preview);
+            } else {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryMode 不合法");
+            }
+        }
+        Long durationSeconds = finiteDuration(preview);
+        List<String> reasons = new ArrayList<>();
+        collectStartReasons(reasons);
+        if (!reasons.isEmpty()) {
+            throw ControlAvailability.unavailable(reasons);
+        }
+        EnvironmentReport env = availability.environment();
+        int workers = CpuEngine.cappedWorkerCount(0, Math.max(1, env.logicalCpus()));
+        final double resolvedCpu = cpuTarget == null ? 0D : cpuTarget;
+        final String resolvedMemoryMode = memoryMode;
+        final Long resolvedMemoryBytes = memoryTargetBytes;
+        final Double resolvedMemoryPct = memoryTargetPct;
+        final boolean combinedMode = "COMBINED".equals(mode);
+        final boolean memoryOnly = "MEMORY".equals(mode);
+        SessionClaim claim = sessions.claim(executionId);
+        try {
+            if (combinedMode) {
+                combined.start(claim, resolvedCpu, workers, resolvedMemoryMode, resolvedMemoryBytes, resolvedMemoryPct);
+            } else if (memoryOnly) {
+                if (MemoryEngine.MODE_EXTRA_BYTES.equals(resolvedMemoryMode)) {
+                    memoryEngine.startExtraBytes(claim, resolvedMemoryBytes, true, true);
+                } else {
+                    memoryEngine.startSystemPercent(claim, resolvedMemoryPct, true, true);
+                }
+            } else {
+                engine.start(claim, resolvedCpu, workers);
+            }
+        } catch (RuntimeException exception) {
+            if (!combinedMode) {
+                try {
+                    sessions.requestStop(executionId, StopKind.FAILURE);
+                } catch (RuntimeException ignored) {
+                    // 启动失败路径以原始异常为准
+                }
+                scheduleAwaitStop();
+            }
+            throw exception;
+        }
+        if (durationSeconds != null) {
+            scheduleDurationStop(executionId, durationSeconds);
+        }
+    }
+
     public Map<String, Object> pause(String executionId) {
         requireActive(executionId);
         boolean hasCpu = owns(engine.view().executionId(), executionId);

@@ -11,8 +11,8 @@ import java.util.List;
 import org.springframework.http.HttpStatus;
 
 /**
- * 只计算下一次触发时间。不扫描到期项，不补写漏执行，也不启动负载。
- * 夏令时缺口跳过；重叠的本地时间只取较早的那一次。固定间隔从 UTC 锚点直接跳到下一次。
+ * 计算下一次触发时间。夏令时缺口跳过；重叠的本地时间只取较早的那一次。
+ * 固定间隔从 UTC 锚点直接跳到下一次。本类不写数据库，也不启动负载。
  */
 final class ScheduleCalendar {
     private ScheduleCalendar() {
@@ -33,6 +33,16 @@ final class ScheduleCalendar {
         } catch (ArithmeticException exception) {
             throw invalid("下一次触发时间超出可表示范围");
         }
+    }
+
+    /**
+     * 严格晚于已处理触发点的下一次。一次性计划没有下一次。
+     */
+    static long nextAfter(ScheduleSpec.Definition definition, long previousInclusive) {
+        if ("ONCE".equals(definition.type())) {
+            throw invalid("一次性计划没有下一次触发");
+        }
+        return nextFire(definition, Math.incrementExact(previousInclusive));
     }
 
     private static long nextOnce(long startAt, long now) {

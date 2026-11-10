@@ -24,7 +24,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 定时计划的保存、修改、删除和启停。计算并保存下一次触发时间。
- * 不扫描到期项，不写执行实例，也不启动负载。
+ * 到期扫描、冲突跳过和漏执行由 {@link ScheduleDispatcher} 负责。本类不启动负载。
  */
 @Service
 public class ScheduleService {

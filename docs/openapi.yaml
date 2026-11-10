@@ -283,7 +283,7 @@ paths:
   /schedules:
     get:
       x-phase: M4
-      summary: 计划列表，按 nextFireAt、id 升序。不扫描到期项
+      summary: 计划列表，按 nextFireAt、id 升序。本接口不触发计划
       parameters:
         - in: query
           name: page
