@@ -1,6 +1,6 @@
 # 进度
 
-阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配内存。
+阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M3-01 已接入假分配器与三重预算。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
 
 ## 已完成
 
@@ -132,6 +132,14 @@ CPU 引擎复用已有 `CpuDutyCalculator`（含安全归零、禁止增长、�
 - `mvn "-Dskip.frontend=true" test`：BUILD SUCCESS。83 个测试，0 失败。其中 `CpuControlServiceTest` 4 个，覆盖受理响应不假定完成、状态字段、内存模式拒绝、环境不可控拒绝、预检无副作用。
 - `npm run build`（frontend）：成功。资源页 CPU 标签展示目标/实际/duty/Worker/受限原因；内存与联合仍提示引擎未开放。
 
+## M3-01 假分配器接入三重预算
+
+`FakeMemoryAllocator` 只维护 heldBytes 计数，不分配 `byte[]`。`MemoryBudgetGate` 复用已有 `MemoryBudget`：EXTRA_BYTES 固定容量超过 `held+B` 时抛 422 / `MEMORY_BUDGET_EXCEEDED`（details 含 requestedBytes、allowedAdditionalBytes、limitingFactors），持有量不变。预算内增长只改假计数。公开启动对超预算 MEMORY 先 422；预算内仍 503（分块引擎未开放）。预检与 `/resource/status` 返回预算预览，无副作用。
+
+2026-11-10，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。90 个测试，0 失败。其中 `MemoryBudgetGateTest` 5 个，覆盖超预算 422 无增长、预算内假持有、增量超限、减目标清计数、缺样本零预算；`CpuControlServiceTest` 增补超预算 422、预算内仍 503、内存预检暴露预算。
+
 ## 下一阶段
 
-M3-01：假分配器接入三重预算。M2-09 / AT-03 仅在获准测试环境、基线 CPU 低于 10% 时执行。
+M3-02：4MiB 分块、逐块检查和 32MiB/s 限速。M2-09 / AT-03 仅在获准测试环境、基线 CPU 低于 10% 时执行。

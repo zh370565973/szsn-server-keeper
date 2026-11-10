@@ -1,0 +1,132 @@
+package com.szsn.srm.resource;
+
+import com.szsn.srm.common.ApiException;
+import com.szsn.srm.common.Units;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import org.springframework.http.HttpStatus;
+
+/**
+ * 假分配器与三重预算的接入点。固定容量（EXTRA_BYTES）超过当前可新增预算时返回 422，
+ * 且不改变持有量。不实现分块限速与 SYSTEM_PERCENT。
+ */
+public final class MemoryBudgetGate {
+    public static final String BUDGET_EXCEEDED = "MEMORY_BUDGET_EXCEEDED";
+
+    private final MemoryAllocator allocator;
+    private final MemorySampleSource samples;
+    private final long taskCapBytes;
+
+    public MemoryBudgetGate(MemoryAllocator allocator, MemorySampleSource samples, long taskCapBytes) {
+        this.allocator = Objects.requireNonNull(allocator, "allocator");
+        this.samples = Objects.requireNonNull(samples, "samples");
+        if (taskCapBytes <= 0) {
+            throw new IllegalArgumentException("任务上限必须为正");
+        }
+        this.taskCapBytes = taskCapBytes;
+    }
+
+    public static MemoryBudgetGate withDefaults(MemoryAllocator allocator, MemorySampleSource samples) {
+        return new MemoryBudgetGate(allocator, samples, Units.DEFAULT_TASK_CAP);
+    }
+
+    public long heldBytes() {
+        return allocator.heldBytes();
+    }
+
+    public long taskCapBytes() {
+        return taskCapBytes;
+    }
+
+    /**
+     * 用当前样本与持有量计算三重预算。样本关键字段缺失时 additionalBytes=0。
+     */
+    public MemoryBudget.Result currentBudget() {
+        return MemoryBudget.compute(budgetInput(requireSample()));
+    }
+
+    /**
+     * 固定容量目标准入：新目标不得超过 {@code held + B}。超限抛 422，分配器不变。
+     */
+    public MemoryBudget.Result requireFixedCapacity(long requestedBytes) {
+        if (requestedBytes < 1) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetBytes 不合法");
+        }
+        MemoryBudget.Result budget = currentBudget();
+        long allowedTotal = Math.addExact(allocator.heldBytes(), budget.additionalBytes());
+        if (requestedBytes > allowedTotal) {
+            throw exceeded(requestedBytes, budget);
+        }
+        return budget;
+    }
+
+    /**
+     * 在预算内把假持有量调到目标。超预算抛 422 且不改持有量；减少目标只减计数。
+     * 本任务一次调到位，分块与限速留给后续任务。
+     */
+    public long growTo(long targetBytes) {
+        requireFixedCapacity(targetBytes);
+        long held = allocator.heldBytes();
+        if (targetBytes == held) {
+            return held;
+        }
+        if (targetBytes < held) {
+            return allocator.release(held - targetBytes);
+        }
+        long need = targetBytes - held;
+        MemoryBudget.Result budget = currentBudget();
+        if (need > budget.additionalBytes()) {
+            throw exceeded(targetBytes, budget);
+        }
+        return allocator.grow(need);
+    }
+
+    public Map<String, Object> budgetView() {
+        MemoryBudget.Result budget = currentBudget();
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("additionalBytes", budget.additionalBytes());
+        view.put("systemReserveBytes", budget.systemReserveBytes());
+        view.put("heapReserveBytes", budget.heapReserveBytes());
+        view.put("loadCapBytes", budget.loadCapBytes());
+        view.put("heldBytes", allocator.heldBytes());
+        view.put("taskCapBytes", taskCapBytes);
+        view.put("limitingFactors", budget.limitingFactors());
+        return view;
+    }
+
+    private MemoryBudget.Input budgetInput(MemorySample sample) {
+        long memTotal = sample.memTotalBytes() == null ? -1L : sample.memTotalBytes();
+        long memAvailable = sample.memAvailableBytes() == null ? -1L : sample.memAvailableBytes();
+        long heapMax = sample.heapMaxBytes() == null ? 0L : sample.heapMaxBytes();
+        long heapUsed = sample.heapUsedBytes() == null ? -1L : sample.heapUsedBytes();
+        if (memTotal < 0 || memAvailable < 0 || heapUsed < 0) {
+            return new MemoryBudget.Input(0, 0, 0, 0, allocator.heldBytes(), taskCapBytes);
+        }
+        return new MemoryBudget.Input(
+                memTotal,
+                memAvailable,
+                heapMax,
+                heapUsed,
+                allocator.heldBytes(),
+                taskCapBytes);
+    }
+
+    private MemorySample requireSample() {
+        MemorySample sample = samples.sample();
+        if (sample == null) {
+            return new MemorySample(null, null, null, null);
+        }
+        return sample;
+    }
+
+    private static ApiException exceeded(long requestedBytes, MemoryBudget.Result budget) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("requestedBytes", requestedBytes);
+        details.put("allowedAdditionalBytes", budget.additionalBytes());
+        details.put("limitingFactors", List.copyOf(budget.limitingFactors()));
+        return new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, BUDGET_EXCEEDED,
+                "固定内存目标超过当前预算", details);
+    }
+}

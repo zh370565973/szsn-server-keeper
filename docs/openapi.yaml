@@ -79,16 +79,16 @@ paths:
         "200": { description: 桶列表 }
   /resource/status:
     get:
-      x-phase: M2
-      summary: 开关、锁存、健康窗口、当前实例和 CPU 目标/实际/duty/Worker/受限原因
+      x-phase: M3
+      summary: 开关、锁存、健康窗口、当前实例、CPU 状态与三重内存预算预览
       responses:
-        "200": { description: loadEngine=CPU；成功字段不假定引擎已调到目标 }
+        "200": { description: loadEngine=CPU；budget 为假分配器当前预算；成功字段不假定引擎已调到目标 }
   /resource/preflight:
     post:
-      x-phase: M2
-      summary: CPU 预检，无副作用；内存/联合仍不可用
+      x-phase: M3
+      summary: CPU/内存预检，无副作用；MEMORY EXTRA_BYTES 返回预算；引擎未开放时 ok=false
       responses:
-        "200": { description: ok/reasons/workerCount；不预留资源 }
+        "200": { description: ok/reasons/workerCount/budget；不预留资源 }
   /executions:
     get:
       x-phase: M1
@@ -96,8 +96,8 @@ paths:
       responses:
         "200": { description: 空页 }
     post:
-      x-phase: M2
-      summary: 手动启动 CPU；内存/联合返回 503
+      x-phase: M3
+      summary: 手动启动 CPU；MEMORY EXTRA_BYTES 超预算 422；预算内内存/联合仍 503
       parameters:
         - in: header
           name: Idempotency-Key
@@ -105,7 +105,8 @@ paths:
           required: true
       responses:
         "202": { description: 已受理，status 多为 STARTING，engineCompleted=false }
-        "503": { description: CONTROL_UNAVAILABLE，环境不可控或非 CPU 模式 }
+        "422": { description: MEMORY_BUDGET_EXCEEDED，requestedBytes/allowedAdditionalBytes/limitingFactors，无分配 }
+        "503": { description: CONTROL_UNAVAILABLE，环境不可控或内存引擎未开放 }
   /executions/{id}:
     get:
       x-phase: M4

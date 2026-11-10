@@ -73,19 +73,58 @@ class CpuControlServiceTest {
     }
 
     @Test
-    void memoryModeRejectedWithoutSideEffects() throws Exception {
+    void memoryOverBudgetReturns422WithoutSideEffects() throws Exception {
         Harness harness = harness(true);
         engine = harness.engine;
         service = harness.service;
         harness.switchOn();
         fillMonitor(harness.store, harness.clock, 12);
+        long heldBefore = harness.memory.heldBytes();
         ApiException exception = assertThrows(ApiException.class,
                 () -> harness.service.start(UUID.randomUUID().toString(), """
-                        {"resourceMode":"MEMORY","memoryMode":"EXTRA_BYTES","memoryTargetBytes":1048576,"runMode":"CONTINUOUS"}
+                        {"resourceMode":"MEMORY","memoryMode":"EXTRA_BYTES","memoryTargetBytes":1073741824,"runMode":"CONTINUOUS"}
+                        """));
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, exception.status());
+        assertEquals(MemoryBudgetGate.BUDGET_EXCEEDED, exception.code());
+        assertEquals(heldBefore, harness.memory.heldBytes());
+        assertFalse(harness.sessions.active().isPresent());
+    }
+
+    @Test
+    void memoryWithinBudgetStillUnavailableWithoutSideEffects() throws Exception {
+        Harness harness = harness(true);
+        engine = harness.engine;
+        service = harness.service;
+        harness.switchOn();
+        fillAmpleMemoryMonitor(harness.store, harness.clock, 12);
+        long heldBefore = harness.memory.heldBytes();
+        ApiException exception = assertThrows(ApiException.class,
+                () -> harness.service.start(UUID.randomUUID().toString(), """
+                        {"resourceMode":"MEMORY","memoryMode":"EXTRA_BYTES","memoryTargetBytes":4194304,"runMode":"CONTINUOUS"}
                         """));
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, exception.status());
         assertEquals("CONTROL_UNAVAILABLE", exception.code());
+        assertEquals(heldBefore, harness.memory.heldBytes());
         assertFalse(harness.sessions.active().isPresent());
+    }
+
+    @Test
+    void memoryPreflightExposesBudgetWithoutSideEffect() throws Exception {
+        Harness harness = harness(true);
+        engine = harness.engine;
+        service = harness.service;
+        fillAmpleMemoryMonitor(harness.store, harness.clock, 12);
+        Map<String, Object> result = harness.service.preflight("""
+                {"resourceMode":"MEMORY","memoryMode":"EXTRA_BYTES","memoryTargetBytes":4194304,"runMode":"CONTINUOUS"}
+                """);
+        assertEquals(Boolean.FALSE, result.get("sideEffect"));
+        assertEquals(Boolean.FALSE, result.get("ok"));
+        assertTrue(result.get("budget") instanceof Map<?, ?>);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> budget = (Map<String, Object>) result.get("budget");
+        assertTrue(((Number) budget.get("additionalBytes")).longValue() >= 4L * 1024 * 1024);
+        assertFalse(harness.sessions.active().isPresent());
+        assertEquals(0, harness.memory.heldBytes());
     }
 
     @Test
@@ -120,11 +159,22 @@ class CpuControlServiceTest {
         long base = clock.millis();
         for (int i = 0; i < seconds; i++) {
             clock.setMillis(base + i * 1000L);
-            store.add(sample(i + 1, clock.millis(), 8.0));
+            store.add(sample(i + 1, clock.millis(), 8.0, false));
         }
     }
 
-    private static MetricSnapshot sample(long sequence, long observedAt, double busy) {
+    private static void fillAmpleMemoryMonitor(SnapshotStore store, MutableClock clock, int seconds) {
+        long base = clock.millis();
+        for (int i = 0; i < seconds; i++) {
+            clock.setMillis(base + i * 1000L);
+            store.add(sample(i + 1, clock.millis(), 8.0, true));
+        }
+    }
+
+    private static MetricSnapshot sample(long sequence, long observedAt, double busy, boolean ampleHeap) {
+        long heapMax = ampleHeap ? (1L << 30) : (4L << 20);
+        long heapUsed = ampleHeap ? (200L << 20) : (1L << 20);
+        long heapCommitted = ampleHeap ? (400L << 20) : (2L << 20);
         return new MetricSnapshot(
                 sequence,
                 "boot",
@@ -136,7 +186,7 @@ class CpuControlServiceTest {
                 new MetricSnapshot.HostView("h", "Linux", "1", "1", "cpu", 4, "17", 1L, 1L),
                 new MetricSnapshot.CpuView(busy, 1D, 1D, 90D, 0D, 0D, 0.1, 0.1, 0.1),
                 new MetricSnapshot.MemoryView(8L << 30, 4L << 30, 4L << 30, 1L << 30, 0L, 0L),
-                new MetricSnapshot.JvmView(1L << 20, 2L << 20, 4L << 20, 1L << 20, 1L, 1L, 10, 1L << 20, 1D),
+                new MetricSnapshot.JvmView(heapUsed, heapCommitted, heapMax, 1L << 20, 1L, 1L, 10, 1L << 20, 1D),
                 List.of(),
                 List.of(),
                 new MetricSnapshot.NetworkView(0D, 0D, 0L, 0L, List.of()));
@@ -163,9 +213,21 @@ class CpuControlServiceTest {
             MetricSnapshot latest = store.latest();
             return latest == null ? null : latest.cpu().overallBusyPct();
         }, safety::current, (nanos, permit, allowed) -> 1L);
+        FakeMemoryAllocator memory = new FakeMemoryAllocator();
+        MemoryBudgetGate budgetGate = new MemoryBudgetGate(memory, () -> {
+            MetricSnapshot latest = store.latest();
+            if (latest == null || latest.memory() == null || latest.jvm() == null) {
+                return null;
+            }
+            return new MemorySample(
+                    latest.memory().totalBytes(),
+                    latest.memory().availableBytes(),
+                    latest.jvm().heapMaxBytes(),
+                    latest.jvm().heapUsedBytes());
+        }, com.szsn.srm.common.Units.DEFAULT_TASK_CAP);
         CpuControlService createdService = new CpuControlService(availability, controlSwitch, sessions, starts, created,
-                store, safety, storage, clock);
-        return new Harness(createdService, created, sessions, store, clock, controlSwitch);
+                budgetGate, store, safety, storage, clock);
+        return new Harness(createdService, created, sessions, store, clock, controlSwitch, memory);
     }
 
     private static DataSource memoryDb() throws Exception {
@@ -179,7 +241,7 @@ class CpuControlServiceTest {
     }
 
     private record Harness(CpuControlService service, CpuEngine engine, ResourceLoadManager sessions, SnapshotStore store,
-                           MutableClock clock, ControlSwitch controlSwitch) {
+                           MutableClock clock, ControlSwitch controlSwitch, FakeMemoryAllocator memory) {
         void switchOn() {
             controlSwitch.setEnabled(true, Operator.system());
         }

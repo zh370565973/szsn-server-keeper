@@ -27,7 +27,8 @@ import org.springframework.stereotype.Service;
 
 /**
  * CPU 控制编排。成功响应只反映已受理的会话状态，不假定 duty 已调到目标。
- * 内存与联合模式仍拒绝。本类不分配 {@code byte[]}。
+ * MEMORY EXTRA_BYTES 超预算先返回 422 且不分配；预算内仍因引擎未开放返回 503。
+ * 本类不分配真实 {@code byte[]}。
  */
 @Service
 public class CpuControlService implements DisposableBean {
@@ -43,6 +44,7 @@ public class CpuControlService implements DisposableBean {
     private final ResourceLoadManager sessions;
     private final ExecutionStartService starts;
     private final CpuEngine engine;
+    private final MemoryBudgetGate memoryBudget;
     private final SnapshotStore snapshots;
     private final SafetyLoop safetyLoop;
     private final StorageHealth storageHealth;
@@ -56,13 +58,14 @@ public class CpuControlService implements DisposableBean {
 
     public CpuControlService(ControlAvailability availability, ControlSwitch controlSwitch,
                              ResourceLoadManager sessions, ExecutionStartService starts, CpuEngine engine,
-                             SnapshotStore snapshots, SafetyLoop safetyLoop, StorageHealth storageHealth,
-                             Clock clock) {
+                             MemoryBudgetGate memoryBudget, SnapshotStore snapshots, SafetyLoop safetyLoop,
+                             StorageHealth storageHealth, Clock clock) {
         this.availability = availability;
         this.controlSwitch = controlSwitch;
         this.sessions = sessions;
         this.starts = starts;
         this.engine = engine;
+        this.memoryBudget = memoryBudget;
         this.snapshots = snapshots;
         this.safetyLoop = safetyLoop;
         this.storageHealth = storageHealth;
@@ -75,8 +78,12 @@ public class CpuControlService implements DisposableBean {
         List<String> reasons = new ArrayList<>();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("resourceMode", mode);
+        body.put("sideEffect", false);
+        if ("MEMORY".equals(mode)) {
+            return memoryPreflight(config, body, reasons);
+        }
         if (!"CPU".equals(mode)) {
-            reasons.add(ControlAvailability.MEMORY_ENGINE_REASON);
+            reasons.add(ControlAvailability.COMBINED_ENGINE_REASON);
             body.put("ok", false);
             body.put("reasons", List.copyOf(reasons));
             body.put("budget", null);
@@ -91,7 +98,6 @@ public class CpuControlService implements DisposableBean {
         body.put("ok", reasons.isEmpty());
         body.put("reasons", List.copyOf(reasons));
         body.put("budget", null);
-        body.put("sideEffect", false);
         return body;
     }
 
@@ -99,7 +105,7 @@ public class CpuControlService implements DisposableBean {
         JsonNode preview = readConfig(configJson);
         String mode = text(preview, "resourceMode");
         if (!"CPU".equals(mode)) {
-            availability.rejectMemoryOrCombined();
+            rejectNonCpuStart(preview, mode);
         }
         double target = requireCpuTarget(preview);
         List<String> reasons = new ArrayList<>();
@@ -211,10 +217,45 @@ public class CpuControlService implements DisposableBean {
         return cpu;
     }
 
+    public Map<String, Object> memoryBudgetView() {
+        return memoryBudget.budgetView();
+    }
+
     @Override
     public void destroy() {
         cancelDurationStop();
         scheduler.shutdownNow();
+    }
+
+    private Map<String, Object> memoryPreflight(JsonNode config, Map<String, Object> body, List<String> reasons) {
+        String memoryMode = text(config, "memoryMode");
+        body.put("memoryMode", memoryMode);
+        Map<String, Object> budget = memoryBudget.budgetView();
+        body.put("budget", budget);
+        if ("EXTRA_BYTES".equals(memoryMode)) {
+            long requested = requireMemoryTargetBytes(config);
+            body.put("memoryTargetBytes", requested);
+            long allowed = ((Number) budget.get("additionalBytes")).longValue()
+                    + ((Number) budget.get("heldBytes")).longValue();
+            if (requested > allowed) {
+                reasons.add("固定容量超过当前预算");
+            }
+        } else if ("SYSTEM_PERCENT".equals(memoryMode)) {
+            body.put("memoryTargetPct", requireMemoryTargetPct(config));
+        } else {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryMode 不合法");
+        }
+        reasons.add(ControlAvailability.MEMORY_ENGINE_REASON);
+        body.put("ok", false);
+        body.put("reasons", List.copyOf(reasons));
+        return body;
+    }
+
+    private void rejectNonCpuStart(JsonNode preview, String mode) {
+        if ("MEMORY".equals(mode) && "EXTRA_BYTES".equals(text(preview, "memoryMode"))) {
+            memoryBudget.requireFixedCapacity(requireMemoryTargetBytes(preview));
+        }
+        availability.rejectMemoryOrCombined();
     }
 
     private void collectStartReasons(List<String> reasons) {
@@ -408,5 +449,25 @@ public class CpuControlService implements DisposableBean {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "durationSeconds 不合法");
         }
         return value.asLong();
+    }
+
+    private static long requireMemoryTargetBytes(JsonNode node) {
+        JsonNode value = node.get("memoryTargetBytes");
+        if (value == null || !value.isNumber() || value.asLong() < 1) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetBytes 不合法");
+        }
+        return value.asLong();
+    }
+
+    private static double requireMemoryTargetPct(JsonNode node) {
+        JsonNode value = node.get("memoryTargetPct");
+        if (value == null || !value.isNumber()) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetPct 不合法");
+        }
+        double target = value.asDouble();
+        if (Double.isNaN(target) || Double.isInfinite(target) || target < 0 || target > 100) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetPct 必须在 0 到 100 之间");
+        }
+        return target;
     }
 }
