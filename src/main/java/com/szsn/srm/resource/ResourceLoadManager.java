@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * 运行时只保留一个活动会话槽位。普通变更进入同一把锁；急停只递增 generation 并置停止标志，
- * 不进入这把锁，也不调用 {@link OrdinaryJournal}。本类不启动 CPU Worker，也不分配内存。
+ * 不进入这把锁，返回前也不等待 {@link OrdinaryJournal#record}。本类不启动 CPU Worker，也不分配内存。
  */
 @Component
 public class ResourceLoadManager {
@@ -21,11 +21,11 @@ public class ResourceLoadManager {
     private final AtomicReference<Slot> lastFinished = new AtomicReference<>();
     private final OrdinaryJournal journal;
 
-    @Autowired
     public ResourceLoadManager() {
         this(OrdinaryJournal.NONE);
     }
 
+    @Autowired
     public ResourceLoadManager(OrdinaryJournal journal) {
         this.journal = journal == null ? OrdinaryJournal.NONE : journal;
     }
@@ -106,12 +106,12 @@ public class ResourceLoadManager {
             if (!active.compareAndSet(current, stopping)) {
                 Slot now = active.get();
                 if (now != null && now.executionId.equals(executionId)) {
-                    reconcile(now);
+                    reconcileAndRecord(now);
                 }
                 return;
             }
             journal.record(executionId, ExecutionStatus.STOPPING);
-            reconcile(active.get() == null ? stopping : active.get());
+            reconcileAndRecord(active.get() == null ? stopping : active.get());
         }
     }
 
@@ -130,7 +130,10 @@ public class ResourceLoadManager {
             }
             Slot stopping = current.withStop(StopKind.SAFETY, ExecutionStatus.STOPPING);
             if (active.compareAndSet(current, stopping)) {
-                reconcile(stopping);
+                Slot finished = reconcile(stopping);
+                if (finished != null) {
+                    journal.recordLater(finished.executionId, finished.status);
+                }
                 return next;
             }
         }
@@ -151,12 +154,12 @@ public class ResourceLoadManager {
                     return;
                 }
                 if (current.workerExited) {
-                    reconcile(current);
+                    reconcileAndRecord(current);
                     return;
                 }
                 Slot exited = current.withWorkerExited(true);
                 if (active.compareAndSet(current, exited)) {
-                    reconcile(exited);
+                    reconcileAndRecord(exited);
                     return;
                 }
             }
@@ -179,7 +182,7 @@ public class ResourceLoadManager {
                 }
                 Slot updated = current.withHeldBytes(heldBytes);
                 if (active.compareAndSet(current, updated)) {
-                    reconcile(updated);
+                    reconcileAndRecord(updated);
                     return;
                 }
             }
@@ -232,13 +235,13 @@ public class ResourceLoadManager {
             Slot current = active.get();
             if (current == null || current.status.terminal() || current.status == ExecutionStatus.STOPPING) {
                 if (current != null) {
-                    reconcile(current);
+                    reconcileAndRecord(current);
                 }
                 return;
             }
             Slot stopping = current.withStop(kind, ExecutionStatus.STOPPING);
             if (active.compareAndSet(current, stopping)) {
-                reconcile(stopping);
+                reconcileAndRecord(stopping);
                 return;
             }
         }
@@ -256,23 +259,32 @@ public class ResourceLoadManager {
             Slot abandoned = new Slot(current.executionId, ExecutionStatus.STOPPING, current.issuedGeneration,
                     kind, true, current.heldBytes);
             if (active.compareAndSet(current, abandoned)) {
-                reconcile(abandoned);
+                reconcileAndRecord(abandoned);
                 return;
             }
         }
     }
 
-    private void reconcile(Slot current) {
+    private Slot reconcile(Slot current) {
         if (current == null
                 || current.status != ExecutionStatus.STOPPING
                 || !current.workerExited
                 || current.heldBytes != 0
                 || current.stopKind == null) {
-            return;
+            return null;
         }
         Slot finished = current.withStatus(ExecutionTransitions.finishStop(current.status, current.stopKind));
         if (active.compareAndSet(current, null)) {
             lastFinished.set(finished);
+            return finished;
+        }
+        return null;
+    }
+
+    private void reconcileAndRecord(Slot current) {
+        Slot finished = reconcile(current);
+        if (finished != null) {
+            journal.record(finished.executionId, finished.status);
         }
     }
 
