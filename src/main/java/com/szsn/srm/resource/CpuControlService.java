@@ -27,7 +27,7 @@ import org.springframework.stereotype.Service;
 
 /**
  * CPU 控制编排。成功响应只反映已受理的会话状态，不假定 duty 已调到目标。
- * MEMORY EXTRA_BYTES 超预算先返回 422 且不分配；分块增长器已实现，但模式与 HTTP 启动仍返回 503。
+ * MEMORY EXTRA_BYTES 超预算先返回 422 且不分配；双模式引擎已实现，但 HTTP 启动仍返回 503。
  * 本类不分配真实 {@code byte[]}。
  */
 @Service

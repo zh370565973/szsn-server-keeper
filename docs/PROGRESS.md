@@ -1,6 +1,6 @@
 # 进度
 
-阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M3-01 / M3-02 已完成（假分配器、三重预算、4MiB 分块与 32MiB/s 限速）。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
+阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 至 M2-08 已在开发侧完成（含资源页 CPU 标签）。M3-01 至 M3-03 已完成（假分配器、分块限速、EXTRA_BYTES / SYSTEM_PERCENT）。M2-09 / AT-03 真实 CPU 目标待获准环境验收。本轮测试不占满开发机 CPU，也不分配真实 `byte[]`。
 
 ## 已完成
 
@@ -148,6 +148,14 @@ CPU 引擎复用已有 `CpuDutyCalculator`（含安全归零、禁止增长、�
 
 - `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。98 个测试，0 失败。其中 `ChunkedMemoryGrowerTest` 8 个，覆盖分块限速、停止标志中断、预算耗尽停增、样本过期、缺 age、禁止增长、减目标立即释放、非对齐拒绝。
 
+## M3-03 EXTRA_BYTES 与 SYSTEM_PERCENT
+
+`SystemPercentPlanner` 实现 used=T-A、死区 ±2 pp、高于目标只释放不分配、预算不足标 `TARGET_LIMITED`、释放后 10s 冷却禁止再增。`MemoryEngine` 支持 EXTRA_BYTES（启动前固定容量门闸，超限 422）与 SYSTEM_PERCENT（可受限启动），经 `ChunkedMemoryGrower` 假增长。仍不分配真实 `byte[]`；暂停/停止清引用与 MEMORY HTTP 启动留给后续任务（仍 503）。
+
+2026-11-10，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn "-Dskip.frontend=true" clean test`：BUILD SUCCESS。110 个测试，0 失败。其中 `SystemPercentPlannerTest` 6 个、`MemoryEngineTest` 6 个，覆盖死区、系统已高于目标不分配、TARGET_LIMITED、冷却、EXTRA_BYTES 超预算 422。
+
 ## 下一阶段
 
-M3-03：EXTRA_BYTES 与 SYSTEM_PERCENT。M2-09 / AT-03 仅在获准测试环境、基线 CPU 低于 10% 时执行。
+M3-04：暂停和停止清除负载引用。M2-09 / AT-03 仅在获准测试环境、基线 CPU 低于 10% 时执行。

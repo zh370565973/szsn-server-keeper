@@ -56,7 +56,27 @@ public class ResourceEngineConfig {
 
     @Bean
     ChunkedMemoryGrower chunkedMemoryGrower(
-            MemoryAllocator allocator, MemoryBudgetGate gate, MemorySampleSource memorySampleSource) {
-        return new ChunkedMemoryGrower(allocator, gate, memorySampleSource);
+            MemoryAllocator allocator, MemoryBudgetGate gate, MemorySampleSource memorySampleSource,
+            SafetyLoop safetyLoop) {
+        return new ChunkedMemoryGrower(
+                allocator,
+                gate,
+                memorySampleSource,
+                () -> safetyLoop.current().forbidMemoryGrowth(),
+                System::nanoTime,
+                java.util.concurrent.locks.LockSupport::parkNanos,
+                held -> {
+                });
+    }
+
+    @Bean
+    MemoryEngine memoryEngine(
+            ResourceLoadManager sessions,
+            MemoryAllocator allocator,
+            MemoryBudgetGate gate,
+            MemorySampleSource memorySampleSource,
+            ChunkedMemoryGrower grower,
+            SafetyLoop safetyLoop) {
+        return new MemoryEngine(sessions, allocator, gate, memorySampleSource, grower, safetyLoop::current);
     }
 }

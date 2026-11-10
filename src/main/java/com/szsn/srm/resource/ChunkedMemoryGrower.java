@@ -10,7 +10,7 @@ import java.util.function.LongConsumer;
 
 /**
  * 按 4 MiB 分块增长假持有量：每块分配前复核停止标志、最新预算和样本时效；
- * 增长速率不超过 32 MiB/s。不分配真实 {@code byte[]}，不实现 SYSTEM_PERCENT。
+ * 增长速率不超过 32 MiB/s。不分配真实 {@code byte[]}。
  */
 public final class ChunkedMemoryGrower {
     public static final long CHUNK_BYTES = Units.BLOCK;

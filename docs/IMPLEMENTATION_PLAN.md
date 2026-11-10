@@ -18,6 +18,7 @@ PRD 是需求基线。M0 与 M1 已完成。M2-01 至 M2-08 已在开发侧交�
 - M2-08 开放 CPU 写控制与资源页 CPU 标签；生命周期返回 202 且 `engineCompleted=false`；内存/联合仍 503。
 - M3-01 假分配器接入 `MemoryBudget`；EXTRA_BYTES 超预算 422 且无分配；预算内内存启动仍 503。
 - M3-02 `ChunkedMemoryGrower`：4 MiB 分块、逐块复核停止/预算/时效、32 MiB/s 限速；仍不分配真实 `byte[]`；MEMORY HTTP 仍 503。
+- M3-03 `MemoryEngine` + `SystemPercentPlanner`：EXTRA_BYTES / SYSTEM_PERCENT；TARGET_LIMITED；高于目标不分配；释放后 10s 冷却；MEMORY HTTP 仍 503。
 - 前端构建进入 `src/main/resources/static`，再打进同一个 JAR。
 
 ## 需求对应
@@ -28,7 +29,7 @@ PRD 是需求基线。M0 与 M1 已完成。M2-01 至 M2-08 已在开发侧交�
 | RES-01 | M2-01 交付单活动槽位和 generation。急停不等待普通操作段 |
 | RES-02 | 启动落库、幂等键、CPU 预检已做。M3-01 固定容量超预算 422 |
 | RES-03 | M2-05/M2-06/M2-08 已交付 CPU 引擎、页面展示与 202 受理语义 |
-| RES-04 至 RES-06 | 预算、假分配器与分块限速已在；双模式与暂停释放仍未做 |
+| RES-04 至 RES-06 | 预算、分块与双模式已在；暂停/停止清引用与联合回收仍未做 |
 | SAFE-01 | 保护窗口纯函数、独立安全线程与 CPU 引擎已在 |
 | SAFE-02 | M2-03 交付内存开关、急停锁存、人工解除和页面急停入口 |
 | TASK-01 至 TASK-03 | 表已建；手动启动快照可落库；列表和写接口仍按后续任务保留 |
@@ -37,4 +38,4 @@ PRD 是需求基线。M0 与 M1 已完成。M2-01 至 M2-08 已在开发侧交�
 
 ## 下一阶段入口
 
-M3-02 已完成。下一步是 M3-03：EXTRA_BYTES 与 SYSTEM_PERCENT。真实压力（AT-03 / M2-09）只在获准环境执行。
+M3-03 已完成。下一步是 M3-04：暂停和停止清除负载引用。真实压力（AT-03 / M2-09）只在获准环境执行。
