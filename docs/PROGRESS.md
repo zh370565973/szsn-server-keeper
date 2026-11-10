@@ -1,6 +1,6 @@
 # 进度
 
-阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 已在开发侧完成运行时会话槽位。本轮没有实现或启动 CPU/内存负载。
+阶段结论：M0 与 M1 在 Windows 开发机上验证通过。目标麒麟环境待验收。M2-01 已在开发侧完成运行时会话槽位。M2-02 已在开发侧完成启动落库和幂等键。本轮没有实现或启动 CPU/内存负载。
 
 ## 已完成
 
@@ -53,6 +53,18 @@ H2 对 `(SCHEDULE_ID, SCHEDULED_AT)` 的唯一索引允许多个全空组合，�
 
 - `mvn -Dskip.frontend=true test`：BUILD SUCCESS。27 个测试，0 失败。其中 `ResourceLoadManagerTest` 6 个，覆盖五种占用状态互斥、暂停保留槽位、急停在日志记录点仍阻塞时返回且旧许可失效、Worker 未退出或持有量非 0 时拒绝新会话、普通停止幂等，以及 4 个线程同时争用只有一个成功。原有 21 个测试仍通过，控制写接口仍是 503 且不增加 `TASK_EXECUTION`。
 
+## M2-02 启动前落库和幂等键
+
+已获准的手动启动先在一个事务里写入 `TASK_EXECUTION`（状态 STARTING、完整配置快照）和 `REQUEST_DEDUP`，提交成功后才调用 `WorkerLaunch`。事务中的第二次写入失败会回滚，启动动作不会执行。启动动作抛错时，用已有状态迁移把该行写成 FAILED，原因 `START_FAILED`；同一幂等键再次进入只返回这条记录，不再启动。
+
+幂等键必须是 UUID，大小写视为同一键。请求先收成字段顺序固定的配置快照再计算 SHA-256。24 小时内相同键和相同快照返回同一个 executionId，不重复启动。相同键、不同快照返回 409 / `IDEMPOTENCY_CONFLICT`，不改已有快照。窗口按 `expires_at = created_at + 24h` 保存，`now < expires_at` 仍算有效；满 24 小时后同一键新建 executionId，旧行保留。本任务不计算内存预算，不跑 CPU，也不分配 `byte[]`。
+
+公开的 `POST /api/v1/executions` 仍返回 503 / `CONTROL_UNAVAILABLE`，也不写执行记录。控制开关、急停锁存、预检和 CPU 引擎属于后续任务；在那些检查通过之前，不能从 HTTP 占用会话槽位。
+
+2026-11-10，工作目录 `/agent/repos/szsn-server-keeper`。测试运行时是 JDK 21.0.12.1；`pom.xml` 的编译目标仍是 17。
+
+- `mvn -Dskip.frontend=true package`：BUILD SUCCESS。37 个测试，0 失败，0 错误，0 跳过。其中 `ExecutionStartServiceTest` 10 个，覆盖提交后才启动、事务失败不启动、24 小时内重放、大小写与数字写法相同、参数冲突 409、满 24 小时新建、启动失败后重试不再启动、提交后才能签发槽位、8 线程并发只有一次启动，以及非法请求不落库。原有测试仍通过，控制写接口仍是 503 且不增加 `TASK_EXECUTION`。
+
 ## 下一阶段
 
-M2-02：启动前落库和幂等键。先提交 STARTING 与配置快照，再允许启动；24 小时内相同 Idempotency-Key 返回同一 executionId。仍不在开发机上做真实满载，也不实现内存分配。
+M2-03：控制开关与急停锁存。每次启动开关为 OFF；急停持久化锁存；解除锁存需人工操作、无活动会话、连续 30 秒指标健康。仍不在开发机上做真实满载，也不实现内存分配或 CPU 引擎。
