@@ -186,6 +186,43 @@ class TaskTemplateServiceTest {
     }
 
     @Test
+    void updateKeepsFiniteBoundWhileAScheduleReferencesTheTemplate() {
+        Fixture fixture = fixture();
+        TaskTemplateView created = fixture.service.create(CPU, OPERATOR);
+        insertSchedule(fixture, "bound", created.id(), "DAILY");
+
+        ApiException continuous = assertThrows(ApiException.class, () -> fixture.service.update(created.id(), """
+                {"name":"改成持续","resourceMode":"CPU","cpuTargetPct":30,"runMode":"CONTINUOUS","expectedVersion":1}
+                """, OPERATOR));
+        assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, continuous.status());
+        assertEquals("TEMPLATE_NOT_SCHEDULABLE", continuous.code());
+        assertEquals(ScheduleConstraint.NOT_FINITE, ((List<?>) continuous.details().get("schedules")).stream()
+                .map(item -> ((Map<?, ?>) item).get("reason")).findFirst().orElse(null));
+        assertEquals("FINITE", fixture.service.get(created.id()).runMode());
+        assertEquals(1L, fixture.service.get(created.id()).version());
+
+        ApiException tooLong = assertThrows(ApiException.class, () -> fixture.service.update(created.id(), """
+                {"name":"超过一天","resourceMode":"CPU","cpuTargetPct":30,"runMode":"FINITE","durationSeconds":86401,"expectedVersion":1}
+                """, OPERATOR));
+        assertEquals(ScheduleConstraint.DURATION_EXCEEDS_24H, ((List<?>) tooLong.details().get("schedules")).stream()
+                .map(item -> ((Map<?, ?>) item).get("reason")).findFirst().orElse(null));
+        assertEquals(60L, fixture.service.get(created.id()).durationSeconds());
+
+        TaskTemplateView day = fixture.service.update(created.id(), """
+                {"name":"刚好一天","resourceMode":"CPU","cpuTargetPct":30,"runMode":"FINITE","durationSeconds":86400,"expectedVersion":1}
+                """, OPERATOR);
+        assertEquals(86_400L, day.durationSeconds());
+        assertEquals(2L, day.version());
+
+        fixture.jdbc.update("DELETE FROM TASK_SCHEDULE WHERE TASK_ID = ?", created.id());
+        TaskTemplateView released = fixture.service.update(created.id(), """
+                {"name":"不再被引用","resourceMode":"CPU","cpuTargetPct":30,"runMode":"CONTINUOUS","expectedVersion":2}
+                """, OPERATOR);
+        assertEquals("CONTINUOUS", released.runMode());
+        assertNull(released.durationSeconds());
+    }
+
+    @Test
     void listFiltersByNameAndPage() {
         ManualClock clock = new ManualClock(Instant.parse("2026-11-10T00:00:00Z"));
         Fixture fixture = fixture(clock);

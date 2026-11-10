@@ -1,12 +1,12 @@
 # 实施计划
 
-PRD 是需求基线。M0 到 M3 的开发项已在 main 上。M4 未开工。麒麟现场对照和长跑仍待验收。制品版本保持 `1.0.0-M1`。
+PRD 是需求基线。M0 到 M3，以及 M4-01、M4-02 已在开发侧完成。M4-03 未开始。麒麟现场对照和长跑仍待验收。制品版本保持 `1.0.0-M1`。
 
 ## 当前状态（2026-11-10 验收调整后）
 
 公开启动入口按 PRD 在落库前拒绝：`durationSeconds` 为 10 秒–7 天，`memoryTargetPct` 为 1–70，`memoryTargetBytes` 必须是 4MiB 整数倍。不合法返回 422，不写 STARTING。
 
-生产内存分配器是 `ByteArrayMemoryAllocator`：4MiB 分块、逐页写入非零字节、32MiB/s、三重预算；暂停/停止只丢引用，不调用 `System.gc()`。单元测试仍注入 `FakeMemoryAllocator`。生产 CPU 燃烧器是 `ChecksumCpuBurner`。CPU、内存和联合控制的 HTTP 在环境允许时返回 202，不再以 503 作为内存模式的占位。非 Linux、急停锁存或开关关闭时仍是 503 / `CONTROL_UNAVAILABLE`。模板和计划写接口仍是 503。
+生产内存分配器是 `ByteArrayMemoryAllocator`：4MiB 分块、逐页写入非零字节、32MiB/s、三重预算；暂停/停止只丢引用，不调用 `System.gc()`。单元测试仍注入 `FakeMemoryAllocator`。生产 CPU 燃烧器是 `ChecksumCpuBurner`。CPU、内存和联合控制的 HTTP 在环境允许时返回 202，不再以 503 作为内存模式的占位。非 Linux、急停锁存或开关关闭时仍是 503 / `CONTROL_UNAVAILABLE`。模板和计划写接口已开放。计划只保存定义并计算 `nextFireAt`，不扫描到期项。
 
 M3-06 的假分配器边界测试已经在仓库里。2026-11-10 在这台 4 核普通 Linux 上以 64MiB 上限做了真实分配取证（见 `docs/PROGRESS.md`），因此 M3-06 改为已完成；这不是麒麟验收，也不是 AT-05 的 256MiB 全量。麒麟专项（M1-09 / AT-02、M5-04）保持待验收。M2-09 / AT-03 的 8 核、30/40/60% 五分钟观察未作为本次完成项。下一步不是 M3-07（该条已完成），也不领取 M4-01。
 
@@ -30,6 +30,7 @@ M3-06 的假分配器边界测试已经在仓库里。2026-11-10 在这台 4 核
 - M3-04 暂停/停止清负载引用：2 秒内 heldBytes=0；页面分开展示 heldBytes / heapUsed / rssBytes。不把 RSS 下降当作成功。
 - M3-05 `CombinedLoadStarter`：联合启动失败回收两侧并写 FAILED。CPU、内存和联合 HTTP 均已开放。
 - M3-06 `M3AcceptanceTest`：假分配器覆盖 AT-05 至 AT-08。真实有限容量分配在普通 Linux 上取证，不改记成麒麟验收。
+- M4-02 只接受 ONCE、DAILY、WEEKLY、FIXED_INTERVAL，拒绝 Cron。计划必须绑定不超过 24 小时的 FINITE 模板；固定间隔还要求时长不超过间隔。夏令时缺口跳过，重叠本地时间只取第一次。固定间隔按 UTC 锚点直接算下一次，不写漏执行。最多 100 条。不启动调度线程。
 - 前端构建进入 `src/main/resources/static`，再打进同一个 JAR。
 
 ## 需求对应

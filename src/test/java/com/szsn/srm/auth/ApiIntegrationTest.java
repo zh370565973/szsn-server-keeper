@@ -201,7 +201,7 @@ class ApiIntegrationTest {
     }
 
     @Test
-    void taskTemplateSurvivesEditAndReferencedDeleteWhileScheduleWritesStayClosed() throws Exception {
+    void taskTemplateSurvivesEditAndReferencedDeleteWhileEmptyScheduleIsRejected() throws Exception {
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/tasks"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
         MvcResult csrf = mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/auth/csrf"))
@@ -265,13 +265,17 @@ class ApiIntegrationTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isServiceUnavailable());
         assertEquals(executions + 1, jdbc.queryForObject("SELECT COUNT(*) FROM TASK_EXECUTION", Long.class));
 
+        long schedules = jdbc.queryForObject("SELECT COUNT(*) FROM TASK_SCHEDULE", Long.class);
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/schedules")
                         .session(active)
                         .cookie(cookie)
                         .header("X-XSRF-TOKEN", token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isServiceUnavailable());
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnprocessableEntity())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.error.code").value("SCHEDULE_INVALID"));
+        assertEquals(schedules, jdbc.queryForObject("SELECT COUNT(*) FROM TASK_SCHEDULE", Long.class));
+        assertEquals(executions + 1, jdbc.queryForObject("SELECT COUNT(*) FROM TASK_EXECUTION", Long.class));
     }
 
     private MvcResult loginAgain(jakarta.servlet.http.Cookie cookie, String token) throws Exception {

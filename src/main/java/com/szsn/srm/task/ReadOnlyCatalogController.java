@@ -23,17 +23,6 @@ public class ReadOnlyCatalogController {
         this.operationLog = operationLog;
     }
 
-    @GetMapping("/schedules")
-    public ApiBody<PageResult<Map<String, Object>>> schedules(@RequestParam(required = false) Integer page,
-                                                              @RequestParam(required = false) Integer pageSize) {
-        return Bodies.ok(PageResult.empty(PageQuery.page(page), PageQuery.pageSize(pageSize)));
-    }
-
-    @GetMapping("/schedules/{id}")
-    public ApiBody<Void> schedule(@PathVariable String id) {
-        throw missing("定时计划");
-    }
-
     @GetMapping("/executions")
     public ApiBody<PageResult<Map<String, Object>>> executions(@RequestParam(required = false) Integer page,
                                                                @RequestParam(required = false) Integer pageSize) {

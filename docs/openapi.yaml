@@ -248,7 +248,7 @@ paths:
         "400": { description: 缺少 expectedVersion 或格式不合法 }
         "404": { description: 不存在 }
         "409": { description: VERSION_CONFLICT }
-        "422": { description: TARGET_INVALID }
+        "422": { description: TARGET_INVALID；被计划引用且时长不合法时 TEMPLATE_NOT_SCHEDULABLE }
     delete:
       x-phase: M4
       summary: 软删除模板。被计划引用时 409 并列出计划
@@ -282,15 +282,25 @@ paths:
         "503": { description: CONTROL_UNAVAILABLE，无执行记录 }
   /schedules:
     get:
-      x-phase: M1
-      summary: 计划列表，M1 为空
+      x-phase: M4
+      summary: 计划列表，按 nextFireAt、id 升序。不扫描到期项
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 100 }
       responses:
-        "200": { description: 空页 }
+        "200": { description: 分页计划 }
     post:
       x-phase: M4
-      summary: 创建计划
+      summary: 创建 ONCE、DAILY、WEEKLY 或 FIXED_INTERVAL。不接受 Cron。模板必须是不超过 24 小时的有限时长
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: 新计划，version 为 1，带 nextFireAt }
+        "400": { description: 请求格式不合法 }
+        "404": { description: 模板不存在 }
+        "422": { description: SCHEDULE_INVALID、TEMPLATE_NOT_SCHEDULABLE 或 SCHEDULE_LIMIT }
   /schedules/{id}:
     get:
       x-phase: M4
@@ -301,38 +311,48 @@ paths:
           required: true
           schema: { type: string }
       responses:
+        "200": { description: 计划 }
         "404": { description: 不存在 }
     put:
       x-phase: M4
-      summary: 修改计划
+      summary: 整份修改计划。必须带 expectedVersion，只影响以后的 nextFireAt，不改执行实例
       parameters:
         - in: path
           name: id
           required: true
           schema: { type: string }
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: 更新后的计划 }
+        "400": { description: 缺少 expectedVersion 或格式不合法 }
+        "404": { description: 计划或模板不存在 }
+        "409": { description: VERSION_CONFLICT }
+        "422": { description: SCHEDULE_INVALID 或 TEMPLATE_NOT_SCHEDULABLE }
     delete:
       x-phase: M4
-      summary: 删除计划
+      summary: 删除计划。不改变已有执行实例
       parameters:
         - in: path
           name: id
           required: true
           schema: { type: string }
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: 已删除 }
+        "404": { description: 不存在 }
   /schedules/{id}/enabled:
     put:
       x-phase: M4
-      summary: 启停计划
+      summary: 启停计划。启用时重算 nextFireAt；一次性计划若开始时间已过则拒绝
       parameters:
         - in: path
           name: id
           required: true
           schema: { type: string }
       responses:
-        "503": { description: CONTROL_UNAVAILABLE }
+        "200": { description: 更新后的计划 }
+        "400": { description: 缺少 expectedVersion 或格式不合法 }
+        "404": { description: 计划或模板不存在 }
+        "409": { description: VERSION_CONFLICT }
+        "422": { description: SCHEDULE_INVALID 或 TEMPLATE_NOT_SCHEDULABLE }
   /settings:
     get:
       x-phase: M1

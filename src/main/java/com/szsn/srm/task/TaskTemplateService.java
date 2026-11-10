@@ -20,7 +20,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 任务模板的创建、修改和软删除。修改只写 {@code RESOURCE_TASK}，不更新已有执行实例的配置快照。
- * 被 {@code TASK_SCHEDULE} 引用时拒绝删除并列出计划。本类不扫描到期计划，也不启动负载。
+ * 被 {@code TASK_SCHEDULE} 引用时拒绝删除并列出计划；修改后的时长仍须满足这些计划的 24 小时和间隔约束。
+ * 本类不扫描到期计划，也不启动负载。
  */
 @Service
 public class TaskTemplateService {
@@ -106,6 +107,7 @@ public class TaskTemplateService {
                 throw new ApiException(HttpStatus.CONFLICT, "VERSION_CONFLICT", "模板版本已变化",
                         Map.of("version", current.version()));
             }
+            ScheduleConstraint.assertReferenced(draft.runMode(), draft.durationSeconds(), referencingScheduleRefs(id));
             int updated = jdbc.update("""
                     UPDATE RESOURCE_TASK
                     SET NAME = ?, DESCRIPTION = ?, MODE = ?, CPU_TARGET_PCT = ?, MEMORY_MODE = ?,
@@ -189,6 +191,16 @@ public class TaskTemplateService {
         List<Stored> rows = jdbc.query("SELECT " + COLUMNS + " FROM RESOURCE_TASK WHERE ID = ? FOR UPDATE",
                 (rs, row) -> mapStored(rs), id);
         return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    private List<ScheduleConstraint.Ref> referencingScheduleRefs(String taskId) {
+        return jdbc.query("""
+                SELECT ID, TYPE, SCHEDULE_JSON
+                FROM TASK_SCHEDULE
+                WHERE TASK_ID = ?
+                ORDER BY ID
+                """, (rs, row) -> new ScheduleConstraint.Ref(rs.getString(1), rs.getString(2), rs.getString(3)),
+                taskId);
     }
 
     private List<Map<String, Object>> referencingSchedules(String taskId) {
