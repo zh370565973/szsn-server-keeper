@@ -196,6 +196,8 @@ export interface HistoryView {
   to: number
   bucketSeconds: number
   buckets: HistoryPoint[]
+  retainedFrom: number
+  pastRetention: boolean
 }
 
 export interface SettingsView {

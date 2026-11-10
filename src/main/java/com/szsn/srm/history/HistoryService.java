@@ -4,6 +4,7 @@ import com.szsn.srm.common.ApiException;
 import com.szsn.srm.monitor.MetricSnapshot;
 import com.szsn.srm.monitor.Quality;
 import com.szsn.srm.system.StorageHealth;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,18 +15,17 @@ import org.springframework.stereotype.Service;
 @Service
 public class HistoryService {
     static final long RAW_BUCKET_MS = 10_000;
-    static final long RETENTION_MS = 7L * 24 * 60 * 60 * 1000;
-    private static final int DELETE_BATCH = 1000;
 
     private final HistoryRepository repository;
     private final StorageHealth storageHealth;
+    private final Clock clock;
     private final Accumulator accumulator = new Accumulator();
     private boolean writesPaused;
-    private long lastCleanupAt;
 
-    public HistoryService(HistoryRepository repository, StorageHealth storageHealth) {
+    public HistoryService(HistoryRepository repository, StorageHealth storageHealth, Clock clock) {
         this.repository = repository;
         this.storageHealth = storageHealth;
+        this.clock = clock;
         this.writesPaused = !storageHealth.healthy();
     }
 
@@ -38,11 +38,6 @@ public class HistoryService {
             Long closed = accumulator.add(snapshot);
             if (closed != null) {
                 repository.insert(closed, accumulator.closedCount, accumulator.closedCoverage, accumulator.closedMetrics);
-            }
-            long now = System.currentTimeMillis();
-            if (now - lastCleanupAt > 60 * 60 * 1000L) {
-                repository.deleteOlderThan(now - RETENTION_MS, DELETE_BATCH);
-                lastCleanupAt = now;
             }
         } catch (RuntimeException exception) {
             writesPaused = true;
@@ -70,7 +65,10 @@ public class HistoryService {
         long bucketMs = chooseBucket(to - from, bucketSeconds);
         List<HistoryRepository.RawBucket> rows = repository.find(from, to);
         List<HistoryPoint> points = rebucket(rows, bucketMs);
-        return new HistoryView(from, to, bucketMs / 1000, points);
+        long now = clock.millis();
+        long retainedFrom = RetentionPolicy.metricCutoff(now);
+        return new HistoryView(from, to, bucketMs / 1000, points, retainedFrom,
+                RetentionPolicy.pastMetricRetention(from, now));
     }
 
     public static long chooseBucket(long spanMs, Long requestedSeconds) {
@@ -114,7 +112,13 @@ public class HistoryService {
     public record HistoryPoint(long bucketStart, int sampleCount, long coverageMs, Map<String, Object> metrics) {
     }
 
-    public record HistoryView(long from, long to, long bucketSeconds, List<HistoryPoint> buckets) {
+    public record HistoryView(
+            long from,
+            long to,
+            long bucketSeconds,
+            List<HistoryPoint> buckets,
+            long retainedFrom,
+            boolean pastRetention) {
     }
 
     static final class Accumulator {

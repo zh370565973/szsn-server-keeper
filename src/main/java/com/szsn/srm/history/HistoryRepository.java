@@ -41,10 +41,6 @@ public class HistoryRepository {
                 read(rs.getString(4))), from, to);
     }
 
-    public int deleteOlderThan(long cutoff, int limit) {
-        return jdbc.update("DELETE FROM RESOURCE_METRIC WHERE BUCKET_START < ? LIMIT ?", cutoff, limit);
-    }
-
     private String write(Map<String, Object> metrics) {
         try {
             return objectMapper.writeValueAsString(metrics);

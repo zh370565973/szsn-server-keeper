@@ -70,6 +70,9 @@ async function resetLatch() {
       </a-tooltip>
     </a-card>
     <a-card title="只读阈值" size="small">
+      <p>
+        监控曲线保留 7 天。过期后页面不再绘制那段曲线，执行摘要继续留在执行记录里。执行记录保留 90 天、最多 10 万条；操作日志保留 30 天、最多 20 万条。每小时分批清理，每批最多 1000 行，活动中的实例不删除。
+      </p>
       <a-descriptions bordered size="small" :column="1">
         <a-descriptions-item v-for="(value, key) in settings?.thresholds ?? {}" :key="key" :label="String(key)">
           {{ value }}
