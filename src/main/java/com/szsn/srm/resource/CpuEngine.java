@@ -1,5 +1,6 @@
 package com.szsn.srm.resource;
 
+import com.szsn.srm.common.ApiException;
 import com.szsn.srm.common.Units;
 import com.szsn.srm.safety.SafetySignal;
 import java.util.ArrayList;
@@ -11,10 +12,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
+import org.springframework.http.HttpStatus;
 
 /**
  * CPU 负载引擎。复用 {@link CpuDutyCalculator}；Worker 数不超过逻辑核心数；
- * 停止后在 2 秒内确认退出。可注入采集与燃烧器；本类不分配内存，也不打开 HTTP 启动入口。
+ * 停止后在 2 秒内确认退出。暂停只停止计算并保留槽位；恢复须重新预检。
+ * 可注入采集与燃烧器；本类不分配内存，也不打开 HTTP 启动入口。
  */
 public final class CpuEngine {
     public static final long SLICE_MS = 100L;
@@ -26,15 +29,22 @@ public final class CpuEngine {
     private final CpuSampleSource samples;
     private final Supplier<SafetySignal> safety;
     private final CpuBurner burner;
+    private final TargetChangeJournal targetChanges;
     private final Object wake = new Object();
     private final AtomicReference<State> state = new AtomicReference<>();
 
     public CpuEngine(ResourceLoadManager sessions, CpuSampleSource samples, Supplier<SafetySignal> safety,
                      CpuBurner burner) {
+        this(sessions, samples, safety, burner, TargetChangeJournal.NONE);
+    }
+
+    public CpuEngine(ResourceLoadManager sessions, CpuSampleSource samples, Supplier<SafetySignal> safety,
+                     CpuBurner burner, TargetChangeJournal targetChanges) {
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.samples = Objects.requireNonNull(samples, "samples");
         this.safety = Objects.requireNonNull(safety, "safety");
         this.burner = Objects.requireNonNull(burner, "burner");
+        this.targetChanges = targetChanges == null ? TargetChangeJournal.NONE : targetChanges;
     }
 
     /**
@@ -64,9 +74,7 @@ public final class CpuEngine {
         if (claim == null || claim.permit() == null) {
             throw new IllegalArgumentException("会话许可不能为空");
         }
-        if (Double.isNaN(targetPct) || Double.isInfinite(targetPct) || targetPct < 0 || targetPct > 100) {
-            throw new IllegalArgumentException("CPU 目标不合法");
-        }
+        requireTarget(targetPct);
         if (workerCount < 1) {
             throw new IllegalArgumentException("Worker 数必须至少为 1");
         }
@@ -101,7 +109,73 @@ public final class CpuEngine {
     }
 
     /**
-     * 供测试同步推进一次控制周期，不依赖真实 2 秒等待。
+     * RUNNING → PAUSING → PAUSED。duty 归零，Worker 停止计算但保留槽位与许可。
+     */
+    public CpuEngineView pause() {
+        State current = requireActive();
+        String executionId = current.claim.executionId();
+        sessions.beginPause(executionId);
+        current.paused.set(true);
+        current.duty.set(0D);
+        wakeAll();
+        sessions.completePause(executionId);
+        return current.view();
+    }
+
+    /**
+     * 恢复须重新预检。失败保持 PAUSED；通过后 STARTING → RUNNING，duty 从 0 渐进。
+     */
+    public CpuEngineView resume(ResumeGate gate) {
+        State current = requireActive();
+        String executionId = current.claim.executionId();
+        ResumeGate check = gate == null ? ResumeGate.OPEN : gate;
+        try {
+            check.admit();
+        } catch (RuntimeException exception) {
+            sessions.rejectResume(executionId);
+            throw exception;
+        }
+        sessions.acceptResume(executionId);
+        current.calculator.resetDuty();
+        current.duty.set(0D);
+        current.externalLoadHigh.set(false);
+        current.safetyZeroed.set(false);
+        current.paused.set(false);
+        sessions.markRunning(executionId);
+        wakeAll();
+        return current.view();
+    }
+
+    /**
+     * 运行中或暂停时改目标。先记录变更再应用；记录失败不改版本，不谎报成功。
+     * 暂停时只更新配置，恢复后按新目标从 0 渐进。
+     */
+    public CpuEngineView updateTarget(long expectedVersion, double targetPct) {
+        requireTarget(targetPct);
+        State current = requireActive();
+        if (!current.claim.permit().valid()) {
+            throw new SessionRejectedException(SessionRejectedException.Reason.EMERGENCY_PREEMPTED, "许可已失效");
+        }
+        long from = current.configVersion.get();
+        if (from != expectedVersion) {
+            throw new ApiException(HttpStatus.CONFLICT, "VERSION_MISMATCH", "目标版本不匹配",
+                    java.util.Map.of("expectedVersion", expectedVersion, "actualVersion", from));
+        }
+        long to = from + 1;
+        targetChanges.record(current.claim.executionId(), from, to, targetPct);
+        if (!current.configVersion.compareAndSet(from, to)) {
+            sessions.requestStop(current.claim.executionId(), StopKind.FAILURE);
+            wakeAll();
+            throw new ApiException(HttpStatus.CONFLICT, "VERSION_MISMATCH", "目标版本不匹配",
+                    java.util.Map.of("expectedVersion", expectedVersion, "actualVersion", current.configVersion.get()));
+        }
+        current.targetPct.set(targetPct);
+        wakeAll();
+        return current.view();
+    }
+
+    /**
+     * 供测试同步推进一次控制周期，不依赖真实 2 秒等待。暂停中调用只保持 duty=0。
      */
     public CpuEngineView controlTick() {
         State current = requireActive();
@@ -183,6 +257,11 @@ public final class CpuEngine {
             wakeAll();
             return;
         }
+        if (current.paused.get()) {
+            current.duty.set(0D);
+            wakeAll();
+            return;
+        }
         Double raw = samples.overallBusyPct();
         SafetySignal signal = safety.get();
         boolean safetyZero = signal != null && signal.zeroDuty();
@@ -197,7 +276,7 @@ public final class CpuEngine {
         }
         if (raw == null || Double.isNaN(raw) || Double.isInfinite(raw)) {
             current.actual.set(null);
-            CpuDutyCalculator.DutyStep missing = current.calculator.step(0, current.targetPct, true, true);
+            CpuDutyCalculator.DutyStep missing = current.calculator.step(0, current.targetPct.get(), true, true);
             current.duty.set(0D);
             current.ewma.set(missing.ewma());
             current.externalLoadHigh.set(false);
@@ -208,7 +287,7 @@ public final class CpuEngine {
             return;
         }
         current.actual.set(raw);
-        CpuDutyCalculator.DutyStep step = current.calculator.step(raw, current.targetPct, safetyZero, forbidGrowth);
+        CpuDutyCalculator.DutyStep step = current.calculator.step(raw, current.targetPct.get(), safetyZero, forbidGrowth);
         current.duty.set(step.duty());
         current.ewma.set(step.ewma());
         current.externalLoadHigh.set(step.externalLoadHigh());
@@ -227,6 +306,12 @@ public final class CpuEngine {
         WorkerPermit permit = current.claim.permit();
         try {
             while (permit.valid() && !Thread.currentThread().isInterrupted()) {
+                if (current.paused.get()) {
+                    if (!park(current, SLICE_MS)) {
+                        break;
+                    }
+                    continue;
+                }
                 double duty = Units.clampDouble(current.duty.get(), 0, 1);
                 long workMs = Math.round(SLICE_MS * duty);
                 if (workMs < 0) {
@@ -237,12 +322,15 @@ public final class CpuEngine {
                 }
                 long waitMs = SLICE_MS - workMs;
                 if (workMs > 0) {
-                    long value = burner.burn(TimeUnit.MILLISECONDS.toNanos(workMs), permit);
+                    long value = burner.burn(
+                            TimeUnit.MILLISECONDS.toNanos(workMs),
+                            permit,
+                            () -> !current.paused.get());
                     if (value != 0L) {
                         current.checksum.addAndGet(value);
                     }
                 }
-                if (waitMs > 0 && permit.valid()) {
+                if (waitMs > 0 && permit.valid() && !current.paused.get()) {
                     park(current, waitMs);
                 }
             }
@@ -301,6 +389,12 @@ public final class CpuEngine {
         return current;
     }
 
+    private static void requireTarget(double targetPct) {
+        if (Double.isNaN(targetPct) || Double.isInfinite(targetPct) || targetPct < 0 || targetPct > 100) {
+            throw new IllegalArgumentException("CPU 目标不合法");
+        }
+    }
+
     private static ThreadFactory namedFactory(String prefix) {
         AtomicLong sequence = new AtomicLong();
         return runnable -> {
@@ -311,18 +405,20 @@ public final class CpuEngine {
     }
 
     private static CpuEngineView idleView() {
-        return new CpuEngineView(null, false, 0, null, 0, 0, 0, false, false, false, 0, List.of());
+        return new CpuEngineView(null, false, false, 0, 0, null, 0, 0, 0, false, false, false, 0, List.of());
     }
 
     private static final class State {
         private final SessionClaim claim;
-        private final double targetPct;
+        private final AtomicReference<Double> targetPct;
+        private final AtomicLong configVersion = new AtomicLong(1);
         private final int workerCount;
         private final Thread[] workers;
         private final CpuDutyCalculator calculator = new CpuDutyCalculator();
         private final AtomicReference<Double> duty = new AtomicReference<>(0D);
         private final AtomicReference<Double> actual = new AtomicReference<>();
         private final AtomicReference<Double> ewma = new AtomicReference<>(0D);
+        private final AtomicBoolean paused = new AtomicBoolean();
         private final AtomicBoolean externalLoadHigh = new AtomicBoolean();
         private final AtomicBoolean safetyZeroed = new AtomicBoolean();
         private final AtomicBoolean stopTimeout = new AtomicBoolean();
@@ -334,7 +430,7 @@ public final class CpuEngine {
 
         private State(SessionClaim claim, double targetPct, int workerCount) {
             this.claim = claim;
-            this.targetPct = targetPct;
+            this.targetPct = new AtomicReference<>(targetPct);
             this.workerCount = workerCount;
             this.workers = new Thread[workerCount];
         }
@@ -343,7 +439,9 @@ public final class CpuEngine {
             return new CpuEngineView(
                     claim.executionId(),
                     !exitConfirmed.get(),
-                    targetPct,
+                    paused.get(),
+                    targetPct.get(),
+                    configVersion.get(),
                     actual.get(),
                     duty.get(),
                     ewma.get(),

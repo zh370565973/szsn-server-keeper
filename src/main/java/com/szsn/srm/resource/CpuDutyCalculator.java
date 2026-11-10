@@ -71,6 +71,15 @@ public final class CpuDutyCalculator {
         return new DutyStep(duty, ewma, false, false, false);
     }
 
+    /**
+     * 恢复后从 0 渐进，不清空已有 EWMA；外部高负载 streak 一并归零，由后续采样重新判定。
+     */
+    public void resetDuty() {
+        duty = 0;
+        highStreak = 0;
+        externalLoadHigh = false;
+    }
+
     public double duty() {
         return duty;
     }

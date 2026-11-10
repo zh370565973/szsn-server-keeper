@@ -8,7 +8,9 @@ import java.util.List;
 public record CpuEngineView(
         String executionId,
         boolean running,
+        boolean paused,
         double targetPct,
+        long configVersion,
         Double actualPct,
         double duty,
         double ewma,

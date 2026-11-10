@@ -75,6 +75,20 @@ class RuleTest {
     }
 
     @Test
+    void resetDutyStartsFromZeroWithoutClearingEwma() {
+        CpuDutyCalculator calculator = new CpuDutyCalculator();
+        calculator.step(10, 40, false);
+        calculator.step(10, 40, false);
+        assertTrue(calculator.duty() > 0);
+        double ewma = calculator.ewma();
+        calculator.resetDuty();
+        assertEquals(0, calculator.duty());
+        assertEquals(ewma, calculator.ewma(), 1e-12);
+        CpuDutyCalculator.DutyStep next = calculator.step(10, 40, false);
+        assertTrue(next.duty() > 0 && next.duty() <= 0.05);
+    }
+
+    @Test
     void dutyDecreaseIsCappedAndDeadbandHolds() {
         CpuDutyCalculator calculator = new CpuDutyCalculator();
         for (int i = 0; i < 30; i++) {
