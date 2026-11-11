@@ -73,6 +73,6 @@ sudo bash /opt/server-resource-manager/upgrade.sh --jar /path/new.jar
 
 `srm-run` 是 systemd 的启动命令。当前 JAR 的校验和与 `release-pair` 不一致时，它拒绝执行 Java。
 
-## 本次不做
+## 发布包
 
-发布包的 SHA256、依赖清单和离线交付说明属于 M5-02。麒麟现场的备份恢复和 24 小时长跑属于 M5-04。
+离线目录由 `assemble-release.sh` 生成，说明在 `docs/DEPLOY.md`。麒麟现场的备份恢复和 24 小时长跑仍属于 M5-04。断网启动仍属于 M5-03。

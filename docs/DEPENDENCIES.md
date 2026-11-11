@@ -16,4 +16,4 @@
 | Vite | 8.3.7 | frontend/package.json |
 | TypeScript | 5.9.3 | frontend/package.json |
 
-H2 的解析版本在打包后由 `mvn dependency:tree` 写入进度记录。生产运行不下载 Maven 或 npm 依赖。
+H2 的解析版本在打包后由 `mvn -B dependency:list -DincludeScope=runtime` 写入发布包的 `DEPENDENCIES.txt`。2026-11-11 这次解析到 H2 2.3.232、JNA 5.19.1、Spring Framework 6.2.19、Spring Security 6.5.11、Tomcat 10.1.55。生产运行不下载 Maven 或 npm 依赖。

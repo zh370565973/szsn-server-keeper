@@ -1,6 +1,6 @@
 # 进度
 
-阶段结论：M0 与 M1 在 Windows 开发机上验证通过。M2-01 至 M2-08、M3-01 至 M3-05、M3-07、M4-01 至 M4-07、M5-01 已在开发侧完成。生产路径现使用真实 `byte[]` 内存分配和 `ChecksumCpuBurner`。公开启动按 PRD 在落库前校验时长、系统占用和 4MiB 对齐。任务模板可以创建、修改和软删除。计划可以保存 ONCE、DAILY、WEEKLY、FIXED_INTERVAL，并算出下一次触发时间。模板、计划和执行记录页面已接上这些接口；计划列表显示下次触发时间和最近一次跳过原因。执行实例在启动前保存 STARTING 和配置快照，状态变更立即落库，运行中每 30 秒写心跳；重启只把残留非终态标成 INTERRUPTED，不恢复负载。到期扫描每秒运行：同时到期只启动一个，迟到超过 5 秒记 SKIPPED_MISFIRE，离线或时钟前跳不补跑，回拨不重复触发。历史与日志按小时分批清理：监控曲线 7 天，终态执行记录 90 天或 10 万条，操作日志 30 天或 20 万条，活动实例不删除。AT-11、AT-12、AT-15、AT-20 已用文件型 H2 验收并发、重启恢复、迁移校验和、写入失败与磁盘空间不足。麒麟现场对照（M1-09 / AT-02）和长跑（M5-04）仍待验收，本次不要求麒麟机器。M2-09 / AT-03 的 8 核五分钟曲线仍待验收。下文前半是各里程碑当时的记录，不以「未验证」一节里的旧句作为当前实现状态。
+阶段结论：M0 与 M1 在 Windows 开发机上验证通过。M2-01 至 M2-08、M3-01 至 M3-05、M3-07、M4-01 至 M4-07、M5-01、M5-02 已在开发侧完成。生产路径现使用真实 `byte[]` 内存分配和 `ChecksumCpuBurner`。公开启动按 PRD 在落库前校验时长、系统占用和 4MiB 对齐。任务模板可以创建、修改和软删除。计划可以保存 ONCE、DAILY、WEEKLY、FIXED_INTERVAL，并算出下一次触发时间。模板、计划和执行记录页面已接上这些接口；计划列表显示下次触发时间和最近一次跳过原因。执行实例在启动前保存 STARTING 和配置快照，状态变更立即落库，运行中每 30 秒写心跳；重启只把残留非终态标成 INTERRUPTED，不恢复负载。到期扫描每秒运行：同时到期只启动一个，迟到超过 5 秒记 SKIPPED_MISFIRE，离线或时钟前跳不补跑，回拨不重复触发。历史与日志按小时分批清理：监控曲线 7 天，终态执行记录 90 天或 10 万条，操作日志 30 天或 20 万条，活动实例不删除。AT-11、AT-12、AT-15、AT-20 已用文件型 H2 验收并发、重启恢复、迁移校验和、写入失败与磁盘空间不足。麒麟现场对照（M1-09 / AT-02）和长跑（M5-04）仍待验收，本次不要求麒麟机器。M2-09 / AT-03 的 8 核五分钟曲线仍待验收。M5-02 已在 `target/release` 生成 1.0.0-M1 离线目录，JAR 的 SHA-256 见本节后文；断网冷启动仍是 M5-03。下文前半是各里程碑当时的记录，不以「未验证」一节里的旧句作为当前实现状态。
 
 ## 已完成
 
@@ -38,7 +38,7 @@ H2 对 `(SCHEDULE_ID, SCHEDULED_AT)` 的唯一索引允许多个全空组合，�
 - 银河麒麟 V10 SP3、与麒麟 `/proc` 的现场对照（M1-09 / AT-02）、以及 M5-04 长跑。用户同意本次不强制麒麟机，这些条目保持待验收。
 - M2-09 / AT-03：8 核、基线 CPU 低于 10% 时的 30/40/60% 五分钟观察。短时燃烧不能把该条改成已完成。
 - 非回环 HTTPS 与 CIDR 只做了启动拒绝判断，没有证书环境。
-- 24 小时运行仍未做。磁盘空间不足和数据库写入失败已在 M4-06 用注入的低空间报告和真实 H2 写入失败验收，没有把开发机磁盘写满。安装、冷备和升级回滚脚本已在 M5-01 用假 systemctl 验收；真实 systemd、空目录恢复和麒麟现场仍是 AT-17，目标环境待验收。
+- 24 小时运行仍未做。磁盘空间不足和数据库写入失败已在 M4-06 用注入的低空间报告和真实 H2 写入失败验收，没有把开发机磁盘写满。安装、冷备和升级回滚脚本已在 M5-01 用假 systemctl 验收；真实 systemd、空目录恢复和麒麟现场仍是 AT-17，目标环境待验收。发布目录已在 M5-02 生成；无外网的目标机启动仍是 M5-03。
 
 ## 已知限制
 
@@ -320,6 +320,20 @@ systemd 使用 `Restart=on-failure`、`RestartSec=5`，120 秒内最多启动 5 
 
 - `mvn "-Dskip.frontend=true" test`：BUILD SUCCESS。181 个测试，0 失败，0 错误，0 跳过。其中 `DeployScriptTest` 6 个：服务运行中或存在 H2 锁文件时拒绝冷备；停止后备份校验和与原数据库一致并重新启动；恢复缺少 `--backup` 或 `--confirm` 时只警告覆盖、不改文件，篡改备份后拒绝且原数据仍在；失败升级回滚到刚做的那一份旧 JAR 和数据库，不采用另一份诱饵备份；成功升级后，与 `release-pair` 不一致的旧 JAR 不会被启动。
 
+## M5-02 发布物
+
+`deploy/assemble-release.sh` 把已经构建好的 JAR、`deploy/` 脚本、OpenAPI、依赖清单和 `docs/DEPLOY.md` 放进一个空目录，并写 `SHA256SUMS` 和 `MANIFEST`。清单不包含自身。版本必须显式传入。输出目录非空时拒绝，避免覆盖。脚本不下载依赖，也不启动 Java。
+
+2026-11-11，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。Node 20.19.5。
+
+- `mvn "-Dskip.frontend=true" test`：BUILD SUCCESS。184 个测试，0 失败，0 错误，0 跳过。其中 `ReleasePackageTest` 3 个：缺参数不创建目录；假 JAR 打出的目录含 JAR、依赖清单、OpenAPI、部署说明和安装脚本，SHA-256 与文件一致，`MANIFEST` 记下 JAR 和 `SHA256SUMS` 的校验和；脚本目录缺文件时不写校验和。
+- `mvn -DskipTests package`：BUILD SUCCESS。前端经 `npm ci` 与 Vite 打进 JAR。Node 20.19.5 对 Vite 8 的传递依赖有引擎提示，构建完成。
+- `mvn -B "-Dskip.frontend=true" dependency:list -DincludeScope=runtime -Dsort=true -DappendOutput=false -DoutputFile=target/DEPENDENCIES.txt`：BUILD SUCCESS。H2 2.3.232，JNA 5.19.1，Spring Framework 6.2.19，Spring Security 6.5.11，Tomcat 10.1.55。
+- `bash deploy/assemble-release.sh --jar target/server-resource-manager-1.0.0-M1.jar --dependencies target/DEPENDENCIES.txt --openapi docs/openapi.yaml --deploy-doc docs/DEPLOY.md --scripts deploy --out target/release --version 1.0.0-M1`：退出码 0。`jar_sha256=b4f6cb258a699a1a65a2620991aaa7e0ccdcae2c00275fd82719f2612afa2079`。`checksums_sha256=30aeaf635bea8ca978f62de87eb5d7d48a06ea15d843a4657e7b9319884d9390`。
+- 在 `target/release` 执行 `sha256sum -c SHA256SUMS`：13 个文件全部 OK。JAR 含 `BOOT-INF/classes/static/index.html`，页面脚本指向 `/assets/`，没有 CDN 外链。没有启动服务，也没有做 CPU 或内存压力。
+
+发布目录在 `target/release`，不进入 git。断网冷启动仍是 M5-03。麒麟现场仍是目标环境待验收。
+
 ## 下一阶段
 
-M5-02 未开始：发布物，包括 JAR、SHA256、依赖清单、OpenAPI 和部署说明。AT-17、AT-18 仍随 M5-04 待麒麟环境。M2-09 / AT-03 仍待 8 核环境下的 30/40/60% 五分钟观察。
+M5-03 未开始：断网运行。AT-17、AT-18 仍随 M5-04 待麒麟环境。M2-09 / AT-03 仍待 8 核环境下的 30/40/60% 五分钟观察。
