@@ -5,7 +5,9 @@ import OverviewView from './views/OverviewView.vue'
 import ResourceView from './views/ResourceView.vue'
 import HistoryView from './views/HistoryView.vue'
 import SettingsView from './views/SettingsView.vue'
-import PlaceholderView from './views/PlaceholderView.vue'
+import TasksView from './views/TasksView.vue'
+import SchedulesView from './views/SchedulesView.vue'
+import ExecutionsView from './views/ExecutionsView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -17,9 +19,9 @@ const router = createRouter({
       children: [
         { path: '', component: OverviewView },
         { path: 'resource', component: ResourceView },
-        { path: 'tasks', component: PlaceholderView, props: { title: '任务模板', phase: 'M4' } },
-        { path: 'schedules', component: PlaceholderView, props: { title: '定时计划', phase: 'M4' } },
-        { path: 'executions', component: PlaceholderView, props: { title: '执行记录', phase: 'M4' } },
+        { path: 'tasks', component: TasksView },
+        { path: 'schedules', component: SchedulesView },
+        { path: 'executions', component: ExecutionsView },
         { path: 'history', component: HistoryView },
         { path: 'settings', component: SettingsView }
       ]

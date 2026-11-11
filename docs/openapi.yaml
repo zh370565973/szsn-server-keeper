@@ -92,10 +92,30 @@ paths:
         "200": { description: ok/reasons/workerCount/budget/maxAllowedBytes；不预留资源 }
   /executions:
     get:
-      x-phase: M1
-      summary: 执行记录分页，M1 为空
+      x-phase: M4
+      summary: 执行记录分页。可按 status、taskId、from、to 过滤；时间比较开始、结束或计划触发时间。不含幂等键
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 100 }
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: taskId
+          schema: { type: string }
+        - in: query
+          name: from
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: to
+          schema: { type: integer, format: int64 }
       responses:
-        "200": { description: 空页 }
+        "200": { description: 分页执行记录 }
+        "400": { description: status、taskId 或时间范围不合法 }
     post:
       x-phase: M3
       summary: 手动启动 CPU/MEMORY/COMBINED；EXTRA_BYTES 超预算 422（含 maxAllowedBytes，不静默改小）；联合失败回收两侧
@@ -118,7 +138,8 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        "404": { description: M1 没有执行实例 }
+        "200": { description: 快照、有效统计、安全事件；目标变更没有单独落库时为空列表 }
+        "404": { description: 执行记录不存在 }
   /executions/{id}/targets:
     patch:
       x-phase: M2
@@ -283,7 +304,7 @@ paths:
   /schedules:
     get:
       x-phase: M4
-      summary: 计划列表，按 nextFireAt、id 升序。本接口不触发计划
+      summary: 计划列表，按 nextFireAt、id 升序，并带最近一次跳过原因。本接口不触发计划
       parameters:
         - in: query
           name: page

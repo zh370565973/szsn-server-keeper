@@ -7,7 +7,96 @@ export interface ApiErrorBody {
     allowedAdditionalBytes?: number
     maxAllowedBytes?: number
     limitingFactors?: string[]
+    schedules?: { id?: string; type?: string }[]
+    version?: number
+    reason?: string
   }
+}
+
+export interface PageResult<T> {
+  items: T[]
+  page: number
+  pageSize: number
+  total: number
+}
+
+export interface TaskTemplate {
+  id: string
+  name: string
+  description?: string
+  resourceMode: string
+  cpuTargetPct?: number | null
+  memoryMode?: string | null
+  memoryTargetBytes?: number | null
+  memoryTargetPct?: number | null
+  runMode: string
+  durationSeconds?: number | null
+  version: number
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ScheduleItem {
+  id: string
+  taskId: string
+  type: string
+  timezone?: string | null
+  startAt?: number | null
+  localTime?: string | null
+  weekdays?: number[] | null
+  anchorAt?: number | null
+  intervalSeconds?: number | null
+  enabled: boolean
+  nextFireAt?: number | null
+  version: number
+  createdAt: number
+  updatedAt: number
+  lastSkipReason?: string | null
+  lastSkippedAt?: number | null
+  lastSkipMissedCount?: number | null
+}
+
+export interface ExecutionSummary {
+  id: string
+  taskId?: string | null
+  scheduleId?: string | null
+  scheduledAt?: number | null
+  name?: string | null
+  status: string
+  reason?: string | null
+  version: number
+  startedAt?: number | null
+  endedAt?: number | null
+  lastHeartbeatAt?: number | null
+  elapsedDurationMs?: number | null
+  activeDurationMs?: number | null
+  requestSource?: string | null
+  missedCount?: number | null
+}
+
+export interface ExecutionDetail {
+  execution: ExecutionSummary
+  configSnapshotJson: string
+  configSnapshot?: Record<string, unknown> | null
+  configSnapshotReadable: boolean
+  stats?: Record<string, unknown> | null
+  statsReadable: boolean
+  safetyEvents: { reason?: string | null; at?: number | null }[]
+  targetChanges: {
+    at?: number | null
+    fromVersion?: number | null
+    toVersion?: number | null
+    field?: string | null
+    value?: number | null
+  }[]
+}
+
+export interface AcceptedExecution {
+  executionId: string
+  status: string
+  version: number
+  replay?: boolean
+  engineCompleted?: boolean
 }
 
 export interface HostView {
@@ -229,6 +318,19 @@ export class ApiError extends Error {
 
 let csrf: { headerName: string; token: string } | null = null
 let onUnauthorized: (() => void) | null = null
+
+export function explainError(caught: unknown, fallback: string) {
+  if (caught instanceof ApiError) {
+    if (caught.status === 401) {
+      return '登录已过期'
+    }
+    if (caught.status === 403) {
+      return '没有权限或安全校验失败'
+    }
+    return caught.message || fallback
+  }
+  return caught instanceof Error ? caught.message : fallback
+}
 
 export function setUnauthorizedHandler(handler: () => void) {
   onUnauthorized = handler

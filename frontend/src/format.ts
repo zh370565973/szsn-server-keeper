@@ -43,6 +43,40 @@ export function formatTime(epoch?: number | null) {
   }).format(epoch)
 }
 
+export function formatMillis(value?: number | null) {
+  if (value === undefined || value === null || Number.isNaN(value)) {
+    return '无数据'
+  }
+  if (value < 1000) {
+    return `${value} 毫秒`
+  }
+  if (value < 60_000) {
+    const seconds = value / 1000
+    return `${seconds.toFixed(seconds < 10 ? 1 : 0)} 秒`
+  }
+  return formatDuration(Math.floor(value / 1000))
+}
+
+export function toLocalInput(epoch?: number | null) {
+  if (!epoch) {
+    return ''
+  }
+  const date = new Date(epoch)
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+  const pad = (part: number) => String(part).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+export function epochFromLocal(value?: string | null) {
+  if (!value) {
+    return null
+  }
+  const parsed = new Date(value).getTime()
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 export function formatDuration(seconds?: number | null) {
   if (seconds === undefined || seconds === null) {
     return '无数据'

@@ -12,6 +12,7 @@ import com.szsn.srm.task.ScheduleSpec.Draft;
 import com.szsn.srm.task.ScheduleSpec.EnableDraft;
 import java.time.Clock;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +25,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * 定时计划的保存、修改、删除和启停。计算并保存下一次触发时间。
+ * 查询时附上该计划最近一次 SKIPPED 的原因，不改调度。
  * 到期扫描、冲突跳过和漏执行由 {@link ScheduleDispatcher} 负责。本类不启动负载。
  */
 @Service
@@ -53,7 +55,7 @@ public class ScheduleService {
                  ORDER BY NEXT_FIRE_AT ASC, ID ASC
                  LIMIT ? OFFSET ?
                 """, (rs, row) -> map(rs), pageSize, (page - 1L) * pageSize);
-        return new PageResult<>(items, page, pageSize, total == null ? 0 : total);
+        return new PageResult<>(enrich(items), page, pageSize, total == null ? 0 : total);
     }
 
     public ScheduleView get(String id) {
@@ -61,7 +63,7 @@ public class ScheduleService {
         if (stored == null) {
             throw missingSchedule();
         }
-        return stored.view();
+        return published(stored.view());
     }
 
     public ScheduleView create(String json, Operator operator) {
@@ -88,7 +90,7 @@ public class ScheduleService {
             operationLog.insertChange(actor(operator), sourceIp(operator), "SCHEDULE_CREATE", null,
                     write(require(id)), "SUCCESS", null, requestId(operator), now);
         });
-        return require(id);
+        return published(require(id));
     }
 
     public ScheduleView update(String id, String json, Operator operator) {
@@ -119,7 +121,7 @@ public class ScheduleService {
             operationLog.insertChange(actor(operator), sourceIp(operator), "SCHEDULE_UPDATE", write(current.view()),
                     write(require(id)), "SUCCESS", null, requestId(operator), now);
         });
-        return require(id);
+        return published(require(id));
     }
 
     public Map<String, Object> delete(String id, Operator operator) {
@@ -155,7 +157,7 @@ public class ScheduleService {
             try {
                 transactionTemplate.executeWithoutResult(status ->
                         applyEnabled(id, draft, peek.view().taskId(), operator));
-                return require(id);
+                return published(require(id));
             } catch (TaskRebound rebound) {
                 if (attempt == 1) {
                     throw conflict(peek.view().version());
@@ -206,6 +208,68 @@ public class ScheduleService {
         }
         operationLog.insertChange(actor(operator), sourceIp(operator), "SCHEDULE_ENABLE", write(current.view()),
                 write(require(id)), "SUCCESS", null, requestId(operator), now);
+    }
+
+    private ScheduleView published(ScheduleView view) {
+        return enrich(List.of(view)).get(0);
+    }
+
+    private List<ScheduleView> enrich(List<ScheduleView> views) {
+        if (views.isEmpty()) {
+            return views;
+        }
+        Map<String, SkipMark> marks = latestSkips(views.stream().map(ScheduleView::id).toList());
+        List<ScheduleView> enriched = new ArrayList<>(views.size());
+        for (ScheduleView view : views) {
+            SkipMark mark = marks.get(view.id());
+            enriched.add(mark == null ? view : view.withLastSkip(mark.reason(), mark.at(), mark.missedCount()));
+        }
+        return enriched;
+    }
+
+    private Map<String, SkipMark> latestSkips(List<String> ids) {
+        String placeholders = String.join(", ", Collections.nCopies(ids.size(), "?"));
+        List<SkipMark> rows = jdbc.query("""
+                SELECT SCHEDULE_ID, REASON, ENDED_AT, SCHEDULED_AT, STATS_JSON
+                FROM (
+                    SELECT SCHEDULE_ID, REASON, ENDED_AT, SCHEDULED_AT, STATS_JSON,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY SCHEDULE_ID
+                               ORDER BY COALESCE(ENDED_AT, SCHEDULED_AT) DESC, ID DESC
+                           ) AS RN
+                    FROM TASK_EXECUTION
+                    WHERE STATUS = 'SKIPPED' AND SCHEDULE_ID IN (%s)
+                ) LATEST
+                WHERE RN = 1
+                """.formatted(placeholders), (rs, row) -> {
+            Long at = rs.getObject("ENDED_AT") == null ? null : rs.getLong("ENDED_AT");
+            if (at == null && rs.getObject("SCHEDULED_AT") != null) {
+                at = rs.getLong("SCHEDULED_AT");
+            }
+            return new SkipMark(rs.getString("SCHEDULE_ID"), rs.getString("REASON"), at,
+                    missedCount(rs.getString("STATS_JSON")));
+        }, ids.toArray());
+        Map<String, SkipMark> first = new LinkedHashMap<>();
+        for (SkipMark row : rows) {
+            first.putIfAbsent(row.scheduleId(), row);
+        }
+        return first;
+    }
+
+    private static Long missedCount(String statsJson) {
+        if (statsJson == null || statsJson.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = JSON.readTree(statsJson);
+            JsonNode count = node.get("missedCount");
+            if (count == null || !count.isIntegralNumber() || count.longValue() <= 0) {
+                return null;
+            }
+            return count.longValue();
+        } catch (Exception exception) {
+            return null;
+        }
     }
 
     private void lockScheduleRows() {
@@ -268,7 +332,10 @@ public class ScheduleService {
                 nextFireAt,
                 rs.getLong("VERSION"),
                 rs.getLong("CREATED_AT"),
-                rs.getLong("UPDATED_AT"));
+                rs.getLong("UPDATED_AT"),
+                null,
+                null,
+                null);
         return new Stored(view, scheduleJson);
     }
 
@@ -357,6 +424,9 @@ public class ScheduleService {
     }
 
     private record Stored(ScheduleView view, String scheduleJson) {
+    }
+
+    private record SkipMark(String scheduleId, String reason, Long at, Long missedCount) {
     }
 
     private record TemplateRow(String runMode, Long durationSeconds, Long deletedAt) {

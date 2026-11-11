@@ -2,12 +2,9 @@ package com.szsn.srm.task;
 
 import com.szsn.srm.auth.OperationLogRepository;
 import com.szsn.srm.common.ApiBody;
-import com.szsn.srm.common.ApiException;
 import com.szsn.srm.common.Bodies;
 import com.szsn.srm.common.PageQuery;
 import com.szsn.srm.common.PageResult;
-import java.util.Map;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -18,29 +15,32 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1")
 public class ReadOnlyCatalogController {
     private final OperationLogRepository operationLog;
+    private final ExecutionQueryService executions;
 
-    public ReadOnlyCatalogController(OperationLogRepository operationLog) {
+    public ReadOnlyCatalogController(OperationLogRepository operationLog, ExecutionQueryService executions) {
         this.operationLog = operationLog;
+        this.executions = executions;
     }
 
     @GetMapping("/executions")
-    public ApiBody<PageResult<Map<String, Object>>> executions(@RequestParam(required = false) Integer page,
-                                                               @RequestParam(required = false) Integer pageSize) {
-        return Bodies.ok(PageResult.empty(PageQuery.page(page), PageQuery.pageSize(pageSize)));
+    public ApiBody<PageResult<ExecutionQueryService.ExecutionSummary>> executions(
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer pageSize,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String taskId,
+            @RequestParam(required = false) Long from,
+            @RequestParam(required = false) Long to) {
+        return Bodies.ok(executions.list(PageQuery.page(page), PageQuery.pageSize(pageSize), status, taskId, from, to));
     }
 
     @GetMapping("/executions/{id}")
-    public ApiBody<Void> execution(@PathVariable String id) {
-        throw missing("执行记录");
+    public ApiBody<ExecutionQueryService.ExecutionDetail> execution(@PathVariable String id) {
+        return Bodies.ok(executions.get(id));
     }
 
     @GetMapping("/logs")
     public ApiBody<PageResult<OperationLogRepository.LogRow>> logs(@RequestParam(required = false) Integer page,
                                                                    @RequestParam(required = false) Integer pageSize) {
         return Bodies.ok(operationLog.page(PageQuery.page(page), PageQuery.pageSize(pageSize)));
-    }
-
-    private static ApiException missing(String name) {
-        return new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", name + "不存在");
     }
 }
