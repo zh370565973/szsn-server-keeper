@@ -75,4 +75,4 @@ sudo bash /opt/server-resource-manager/upgrade.sh --jar /path/new.jar
 
 ## 发布包
 
-离线目录由 `assemble-release.sh` 生成，说明在 `docs/DEPLOY.md`。麒麟现场的备份恢复和 24 小时长跑仍属于 M5-04。断网启动仍属于 M5-03。
+离线目录由 `assemble-release.sh` 生成，说明在 `docs/DEPLOY.md`。断网冷启动用同目录的 `verify-offline.sh`。麒麟现场的备份恢复和 24 小时长跑仍属于 M5-04。

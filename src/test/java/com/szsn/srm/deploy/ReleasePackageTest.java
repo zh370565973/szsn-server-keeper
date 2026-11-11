@@ -27,7 +27,8 @@ import org.junit.jupiter.api.io.TempDir;
 class ReleasePackageTest {
     private static final List<String> SCRIPT_NAMES = List.of(
             "srm-common.sh", "srm-run", "install.sh", "backup.sh", "restore.sh", "upgrade.sh",
-            "server-resource-manager.service", "application.yml.example", "README.md");
+            "server-resource-manager.service", "application.yml.example", "README.md",
+            "verify-offline.sh", "OfflineProbe.java");
 
     @Test
     void assemblerUsesLfAndRefusesIncompleteInput(@TempDir Path temp) throws Exception {

@@ -82,7 +82,7 @@ if [ -z "$version" ] || ! printf '%s\n' "$version" | grep -Eq '^[0-9A-Za-z][0-9A
   exit 2
 fi
 
-names="srm-common.sh srm-run install.sh backup.sh restore.sh upgrade.sh server-resource-manager.service application.yml.example README.md"
+names="srm-common.sh srm-run install.sh backup.sh restore.sh upgrade.sh server-resource-manager.service application.yml.example README.md verify-offline.sh OfflineProbe.java"
 for name in $names; do
   if [ ! -f "$scripts/$name" ]; then
     echo "脚本目录缺少 ${name}" >&2
@@ -133,6 +133,8 @@ printf '%s\n' \
   deploy/srm-common.sh \
   deploy/srm-run \
   deploy/upgrade.sh \
+  deploy/verify-offline.sh \
+  deploy/OfflineProbe.java \
   openapi.yaml \
   server-resource-manager.jar \
   | LC_ALL=C sort | while IFS= read -r rel; do

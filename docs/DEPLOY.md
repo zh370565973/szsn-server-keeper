@@ -101,8 +101,17 @@ mvn -B -Dskip.frontend=true dependency:list -DincludeScope=runtime -Dsort=true -
 
 生产运行不根据这份清单再次下载。
 
+## 断网检查
+
+在已经装有 JDK 17 的目录里执行。脚本只调用 `javac` 和 `java`，启动前把 `PATH` 换成空目录：
+
+```text
+bash deploy/verify-offline.sh --jar server-resource-manager.jar --work /tmp/srm-offline
+```
+
+它会扫描包内页面和依赖名，用临时口令完成 `init-admin`，在 `127.0.0.1` 上登录，并确认这个进程没有对外套接字。工作目录必须为空。Windows 上可以追加 `--block-outbound`，短暂阻断这份 `java.exe` 的出站；检查结束后规则会删掉。Linux 上不要加这个参数，套接字检查改为读 `/proc`。
+
 ## 本次没有验收的部分
 
-- 无 Node、无 Maven、无外网的目标机冷启动仍是 M5-03。
 - 麒麟现场的备份恢复、升级回滚和 24 小时长跑仍是 M5-04，目标环境待验收。
 - 8 核、基线 CPU 低于 10% 的 30/40/60% 五分钟观察仍是 M2-09 / AT-03。

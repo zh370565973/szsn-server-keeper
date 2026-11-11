@@ -1,6 +1,6 @@
 # 进度
 
-阶段结论：M0 与 M1 在 Windows 开发机上验证通过。M2-01 至 M2-08、M3-01 至 M3-05、M3-07、M4-01 至 M4-07、M5-01、M5-02 已在开发侧完成。生产路径现使用真实 `byte[]` 内存分配和 `ChecksumCpuBurner`。公开启动按 PRD 在落库前校验时长、系统占用和 4MiB 对齐。任务模板可以创建、修改和软删除。计划可以保存 ONCE、DAILY、WEEKLY、FIXED_INTERVAL，并算出下一次触发时间。模板、计划和执行记录页面已接上这些接口；计划列表显示下次触发时间和最近一次跳过原因。执行实例在启动前保存 STARTING 和配置快照，状态变更立即落库，运行中每 30 秒写心跳；重启只把残留非终态标成 INTERRUPTED，不恢复负载。到期扫描每秒运行：同时到期只启动一个，迟到超过 5 秒记 SKIPPED_MISFIRE，离线或时钟前跳不补跑，回拨不重复触发。历史与日志按小时分批清理：监控曲线 7 天，终态执行记录 90 天或 10 万条，操作日志 30 天或 20 万条，活动实例不删除。AT-11、AT-12、AT-15、AT-20 已用文件型 H2 验收并发、重启恢复、迁移校验和、写入失败与磁盘空间不足。麒麟现场对照（M1-09 / AT-02）和长跑（M5-04）仍待验收，本次不要求麒麟机器。M2-09 / AT-03 的 8 核五分钟曲线仍待验收。M5-02 已在 `target/release` 生成 1.0.0-M1 离线目录，JAR 的 SHA-256 见本节后文；断网冷启动仍是 M5-03。下文前半是各里程碑当时的记录，不以「未验证」一节里的旧句作为当前实现状态。
+阶段结论：M0 与 M1 在 Windows 开发机上验证通过。M2-01 至 M2-08、M3-01 至 M3-05、M3-07、M4-01 至 M4-07、M5-01、M5-02、M5-03 已在开发侧完成。生产路径现使用真实 `byte[]` 内存分配和 `ChecksumCpuBurner`。公开启动按 PRD 在落库前校验时长、系统占用和 4MiB 对齐。任务模板可以创建、修改和软删除。计划可以保存 ONCE、DAILY、WEEKLY、FIXED_INTERVAL，并算出下一次触发时间。模板、计划和执行记录页面已接上这些接口；计划列表显示下次触发时间和最近一次跳过原因。执行实例在启动前保存 STARTING 和配置快照，状态变更立即落库，运行中每 30 秒写心跳；重启只把残留非终态标成 INTERRUPTED，不恢复负载。到期扫描每秒运行：同时到期只启动一个，迟到超过 5 秒记 SKIPPED_MISFIRE，离线或时钟前跳不补跑，回拨不重复触发。历史与日志按小时分批清理：监控曲线 7 天，终态执行记录 90 天或 10 万条，操作日志 30 天或 20 万条，活动实例不删除。AT-11、AT-12、AT-15、AT-20 已用文件型 H2 验收并发、重启恢复、迁移校验和、写入失败与磁盘空间不足。麒麟现场对照（M1-09 / AT-02）和长跑（M5-04）仍待验收，本次不要求麒麟机器。M2-09 / AT-03 的 8 核五分钟曲线仍待验收。M5-02 已在 `target/release` 生成 1.0.0-M1 离线目录，JAR 的 SHA-256 见本节后文。M5-03 已在本机用去掉 Node/Maven 的 PATH，并阻断该 java.exe 出站后完成冷启动和登录。下文前半是各里程碑当时的记录，不以「未验证」一节里的旧句作为当前实现状态。
 
 ## 已完成
 
@@ -38,7 +38,7 @@ H2 对 `(SCHEDULE_ID, SCHEDULED_AT)` 的唯一索引允许多个全空组合，�
 - 银河麒麟 V10 SP3、与麒麟 `/proc` 的现场对照（M1-09 / AT-02）、以及 M5-04 长跑。用户同意本次不强制麒麟机，这些条目保持待验收。
 - M2-09 / AT-03：8 核、基线 CPU 低于 10% 时的 30/40/60% 五分钟观察。短时燃烧不能把该条改成已完成。
 - 非回环 HTTPS 与 CIDR 只做了启动拒绝判断，没有证书环境。
-- 24 小时运行仍未做。磁盘空间不足和数据库写入失败已在 M4-06 用注入的低空间报告和真实 H2 写入失败验收，没有把开发机磁盘写满。安装、冷备和升级回滚脚本已在 M5-01 用假 systemctl 验收；真实 systemd、空目录恢复和麒麟现场仍是 AT-17，目标环境待验收。发布目录已在 M5-02 生成；无外网的目标机启动仍是 M5-03。
+- 24 小时运行仍未做。磁盘空间不足和数据库写入失败已在 M4-06 用注入的低空间报告和真实 H2 写入失败验收，没有把开发机磁盘写满。安装、冷备和升级回滚脚本已在 M5-01 用假 systemctl 验收；真实 systemd、空目录恢复和麒麟现场仍是 AT-17，目标环境待验收。发布目录已在 M5-02 生成。M5-03 的断网冷启动已在本机取证；这台机器仍安装着 Node 和 Maven，网卡没有拔掉。
 
 ## 已知限制
 
@@ -332,8 +332,19 @@ systemd 使用 `Restart=on-failure`、`RestartSec=5`，120 秒内最多启动 5 
 - `bash deploy/assemble-release.sh --jar target/server-resource-manager-1.0.0-M1.jar --dependencies target/DEPENDENCIES.txt --openapi docs/openapi.yaml --deploy-doc docs/DEPLOY.md --scripts deploy --out target/release --version 1.0.0-M1`：退出码 0。`jar_sha256=b4f6cb258a699a1a65a2620991aaa7e0ccdcae2c00275fd82719f2612afa2079`。`checksums_sha256=30aeaf635bea8ca978f62de87eb5d7d48a06ea15d843a4657e7b9319884d9390`。
 - 在 `target/release` 执行 `sha256sum -c SHA256SUMS`：13 个文件全部 OK。JAR 含 `BOOT-INF/classes/static/index.html`，页面脚本指向 `/assets/`，没有 CDN 外链。没有启动服务，也没有做 CPU 或内存压力。
 
-发布目录在 `target/release`，不进入 git。断网冷启动仍是 M5-03。麒麟现场仍是目标环境待验收。
+发布目录在 `target/release`，不进入 git。断网冷启动见下一节。麒麟现场仍是目标环境待验收。
+
+## M5-03 断网运行
+
+`deploy/verify-offline.sh` 只调用 JDK 的 `javac` 和 `java`。启动前把 `PATH` 换成空目录，服务进程的 `PATH` 只保留 JDK 的 `bin` 和 Windows 的 `System32`。`OfflineProbe` 扫描 JAR 里的页面和依赖名，拒绝字体站、CDN 和遥测库；再用临时口令做 `init-admin`，只在 `127.0.0.1` 上启动、拉取包内页面并登录，然后确认该进程没有对外套接字。不启动 CPU 或内存负载。Windows 上 `--block-outbound` 会给这份 `java.exe` 加一条出站阻断，结束时删除。
+
+2026-11-11，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn -B "-Dskip.frontend=true" package`：BUILD SUCCESS。187 个测试，0 失败，0 错误，0 跳过。其中 `OfflineRuntimeTest` 3 个：源码和已构建页面没有外站地址，依赖里没有遥测构件；检查脚本在假 `java` 下不会调用放在 `PATH` 里的 `npm` 或 `mvn`；夹具 JAR 含字体站、外链或 `sentry` 时拒绝，没有首页时也拒绝。
+- `bash deploy/verify-offline.sh --jar target/server-resource-manager-1.0.0-M1.jar --work target/offline-m503 --block-outbound`：退出码 0。`static_files=3`，`libraries=46`，`npm_on_path=false`，`mvn_on_path=false`。`server_path=C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot\bin;C:\Windows\System32`。`outbound_blocked=true`。`sockets=1`，`remote_sockets=0`，`listening=127.0.0.1:60608`，`assets=2`，`login=admin`，`offline_ok`。口令文件是 BCrypt，长度 60，日志里没有口令。防火墙规则 `srm-offline-probe` 已删除。没有启动 CPU 或内存负载。
+
+本机仍然安装着 Node 和 Maven，网卡也没有拔掉。阻断的是 Microsoft JDK 17 的 `java.exe` 出站，不是把整台机器从网络上断开。麒麟现场仍是目标环境待验收。
 
 ## 下一阶段
 
-M5-03 未开始：断网运行。AT-17、AT-18 仍随 M5-04 待麒麟环境。M2-09 / AT-03 仍待 8 核环境下的 30/40/60% 五分钟观察。
+M5-04 待验收：AT-17、AT-18 与 24 小时长跑，需要获准的麒麟机器。M5-05 还要等 M5-04。M2-09 / AT-03 仍待 8 核环境下的 30/40/60% 五分钟观察。

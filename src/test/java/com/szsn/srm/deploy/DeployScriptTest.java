@@ -35,7 +35,7 @@ class DeployScriptTest {
         assertTrue(unit.contains("User=srm"));
         for (String name : List.of(
                 "srm-common.sh", "srm-run", "install.sh", "backup.sh", "restore.sh", "upgrade.sh",
-                "server-resource-manager.service", "application.yml.example")) {
+                "server-resource-manager.service", "application.yml.example", "verify-offline.sh")) {
             String text = Files.readString(repo.resolve("deploy").resolve(name));
             assertFalse(text.contains("\r"), name + " 必须使用 LF，否则目标机上的 bash 无法执行");
         }
