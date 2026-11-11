@@ -1,0 +1,43 @@
+# install.sh 在配置文件不存在时复制本文件，并把 __DATA__、__LOG__ 换成实际目录。
+# 已存在的 /etc/server-resource-manager/application.yml 不会被覆盖。
+server:
+  address: 127.0.0.1
+  port: 8080
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        name: SRM_SESSION
+        http-only: true
+        same-site: strict
+
+spring:
+  application:
+    name: server-resource-manager
+  datasource:
+    url: "jdbc:h2:file:__DATA__/srm;DB_CLOSE_ON_EXIT=FALSE;AUTO_SERVER=FALSE"
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+    hikari:
+      maximum-pool-size: 4
+      minimum-idle: 1
+      pool-name: srm-h2
+  h2:
+    console:
+      enabled: false
+  main:
+    banner-mode: off
+
+srm:
+  timezone: Asia/Shanghai
+  data-dir: "__DATA__"
+  admin:
+    username: admin
+    password-file: "__DATA__/admin.password"
+  remote:
+    cidr: ""
+
+logging:
+  file:
+    name: "__LOG__/srm.log"

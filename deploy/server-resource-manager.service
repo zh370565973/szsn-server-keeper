@@ -1,0 +1,27 @@
+[Unit]
+Description=Server Resource Manager
+After=network-online.target
+Wants=network-online.target
+StartLimitInterval=120
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=srm
+Group=srm
+UMask=0077
+WorkingDirectory=/opt/server-resource-manager
+EnvironmentFile=/etc/server-resource-manager/layout.env
+ExecStart=/opt/server-resource-manager/srm-run
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+SuccessExitStatus=143
+KillMode=mixed
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

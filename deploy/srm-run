@@ -1,0 +1,7 @@
+#!/bin/bash
+# systemd ExecStart。JAR 与数据目录的 release-pair 不一致时拒绝启动。
+set -euo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=srm-common.sh
+. "$HERE/srm-common.sh"
+exec_service
