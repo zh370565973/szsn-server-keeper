@@ -8,6 +8,7 @@ import SettingsView from './views/SettingsView.vue'
 import TasksView from './views/TasksView.vue'
 import SchedulesView from './views/SchedulesView.vue'
 import ExecutionsView from './views/ExecutionsView.vue'
+import GuideView from './views/GuideView.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -23,7 +24,8 @@ const router = createRouter({
         { path: 'schedules', component: SchedulesView },
         { path: 'executions', component: ExecutionsView },
         { path: 'history', component: HistoryView },
-        { path: 'settings', component: SettingsView }
+        { path: 'settings', component: SettingsView },
+        { path: 'guide', component: GuideView }
       ]
     }
   ]

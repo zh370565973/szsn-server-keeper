@@ -1,8 +1,14 @@
+# 控制页默认只在本机打开：http://127.0.0.1:33121
+# 只有一个管理员。登录用户名和口令写在 srm.admin，一般不改。
+# srm.admin.password 非空时用它登录。留空才读取 password-file 里的 BCrypt。
+# spring.datasource 的用户名和密码是内嵌 H2 的，不能用来登录控制页。
 server:
+  # 只监听回环地址。改成非回环地址时，必须同时启用 server.ssl 并填写 srm.remote.cidr，否则拒绝启动。
   address: 127.0.0.1
-  port: 8080
+  port: 33121
   servlet:
     session:
+      # 浏览器登录会话空闲超时。
       timeout: 30m
       cookie:
         name: SRM_SESSION
@@ -13,16 +19,19 @@ spring:
   application:
     name: server-resource-manager
   datasource:
+    # 监控和执行记录都在这个本地 H2 文件库。账号一般不改。
+    # 改用户名或密码不会改写已经建好的库；旧库文件仍要用当初的账号才能打开。
     url: jdbc:h2:file:${srm.data-dir}/srm;DB_CLOSE_ON_EXIT=FALSE;AUTO_SERVER=FALSE
     driver-class-name: org.h2.Driver
-    username: sa
-    password: ""
+    username: srm_db_k4n8
+    password: "Hk7mQ2vL9pR4wX8nB3cF6"
     hikari:
       maximum-pool-size: 4
       minimum-idle: 1
       pool-name: srm-h2
   h2:
     console:
+      # 不开放 H2 网页控制台。
       enabled: false
   jackson:
     default-property-inclusion: non_null
@@ -30,10 +39,36 @@ spring:
     banner-mode: off
 
 srm:
+  # 页面时间显示用的时区。改完后重启生效。
   timezone: Asia/Shanghai
-  data-dir: ./data
+  # 数据库、口令文件都在这个目录。相对路径相对于进程工作目录。
+  # 改目录后重启会在新路径建空库，旧文件留在原地，不会搬走。
+  data-dir: ./data/server-resource-manager
+  # 设置页「部署位置」。数据库、口令、日志和外部配置都在这个目录，拷走或删掉它即可。
+  # jar 只用于展示，不会把正在运行的程序写进该目录。日志文件是 log 目录下的 srm.log。
+  # config 是实际再读一次的配置文件。它里面的同名项盖过本文件，文件可以先不存在。
+  # 改本文件里的 config 路径，或改那个外部文件的内容，都要重启后生效。
+  deploy:
+    jar: ./data/server-resource-manager
+    config: ./data/server-resource-manager/application.yml
+    log: ./data/server-resource-manager
   admin:
+    # 控制页唯一登录用户。只改用户名不会换口令。
     username: admin
+    # 控制页登录口令。长度 12–200。非空时忽略 password-file。
+    password: "Szsn@12345678"
+    # 仅当上面的 password 留空时，init-admin 把 BCrypt 哈希写到这里。
     password-file: ${srm.data-dir}/admin.password
   remote:
+    # 非回环监听时允许访问的网段。留空表示不开放远程访问。
     cidr: ""
+
+logging:
+  file:
+    name: ${srm.deploy.log}/srm.log
+
+---
+# 上一段里的 srm.deploy.config 决定再读哪一份配置。文件不存在就继续用上面的默认值。
+spring:
+  config:
+    import: optional:file:${srm.deploy.config:./data/server-resource-manager/application.yml}

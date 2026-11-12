@@ -14,7 +14,7 @@ M3-06 的假分配器边界测试已经在仓库里。2026-11-10 在这台 4 核
 
 - 制品 `server-resource-manager`，包名 `com.szsn.srm`，Java 17，Spring Boot 3.5.16，OSHI 7.7.3。
 - H2 文件库由 Spring Boot BOM 管理。自研迁移器按 `V{n}__*.sql` 执行，校验和记在 `SCHEMA_VERSION`。
-- 管理员用户名来自 `srm.admin.username`。口令只通过 `java -jar ... init-admin` 写入 BCrypt 文件。
+- 管理员用户名来自 `srm.admin.username`。口令写在 `srm.admin.password`；留空时才通过 `java -jar ... init-admin` 写入 BCrypt 文件。
 - Linux 使用 `/proc/stat` 与 `/proc/meminfo`。其他系统用 OSHI 的同类计数，CPU 公式相同。缺失字段保持缺失。
 - 内存预算、CPU duty、保护窗口和执行状态迁移是纯函数。M2-01 只增加运行时槽位和 generation，不启动 CPU Worker，也不分配负载 `byte[]`。
 - M2-02 的已获准启动先提交 STARTING 与配置快照，再调用启动动作。该条完成时公开启动仍返回 503；现已由控制服务在环境允许时受理。

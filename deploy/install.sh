@@ -49,7 +49,8 @@ for name in srm-common.sh srm-run install.sh backup.sh restore.sh upgrade.sh; do
 done
 
 if [ ! -f "$SRM_ETC/application.yml" ]; then
-  sed -e "s|__DATA__|${SRM_DATA}|g" -e "s|__LOG__|${SRM_LOG}|g" \
+  sed -e "s|__PREFIX__|${SRM_PREFIX}|g" -e "s|__ETC__|${SRM_ETC}|g" \
+    -e "s|__DATA__|${SRM_DATA}|g" -e "s|__LOG__|${SRM_LOG}|g" \
     "$HERE/application.yml.example" > "$SRM_ETC/application.yml"
 fi
 

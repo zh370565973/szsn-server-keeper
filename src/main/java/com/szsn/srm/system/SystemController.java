@@ -81,11 +81,6 @@ public class SystemController {
         thresholds.put("operationLogCap", RetentionPolicy.LOG_CAP);
         thresholds.put("retentionBatchRows", RetentionPolicy.BATCH_LIMIT);
         thresholds.put("maxSseConnections", 5);
-        Map<String, Object> deploy = new LinkedHashMap<>();
-        deploy.put("jar", "/opt/server-resource-manager");
-        deploy.put("config", "/etc/server-resource-manager");
-        deploy.put("data", "/var/lib/server-resource-manager");
-        deploy.put("log", "/var/log/server-resource-manager");
         ControlState state = controlSwitch.state();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("timezone", properties.getTimezone());
@@ -98,7 +93,7 @@ public class SystemController {
         body.put("latchResetReady", state.latchResetReady());
         body.put("thresholdsReadOnly", true);
         body.put("thresholds", thresholds);
-        body.put("deploy", deploy);
+        body.put("deploy", properties.locations());
         body.put("remoteCidrConfigured", properties.getRemote().getCidr() != null && !properties.getRemote().getCidr().isBlank());
         return Bodies.ok(body);
     }

@@ -2,11 +2,14 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { api, explainError, type PageResult, type ScheduleItem, type TaskTemplate } from '../api'
+import { useTableBodyHeight } from '../fillHeight'
 import { epochFromLocal, toLocalInput } from '../format'
 import { nextFireText, scheduleTypeLabel, skipText, weekdayText } from '../labels'
 
 const DAY = 24 * 60 * 60
 const LOCAL_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/
+const tableBox = ref<HTMLElement>()
+const tableBodyHeight = useTableBodyHeight(tableBox)
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -60,7 +63,8 @@ const pagination = computed(() => ({
   total: total.value,
   showSizeChanger: true,
   pageSizeOptions: ['20', '50', '100'],
-  showTotal: (value: number) => `共 ${value} 条`
+  showTotal: (value: number) => `共 ${value} 条`,
+  size: 'small'
 }))
 
 const selectedTemplate = computed(() => templates.value.find((item) => item.id === form.taskId))
@@ -318,8 +322,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page">
-    <a-card size="small">
+  <div class="page page-fill">
+    <a-card size="small" class="shrink">
       <div class="status-row">
         <span>只支持一次、每天、每周和固定间隔，不提供 Cron。关闭或删除计划不会停止已经启动的实例。</span>
         <a-button :loading="loading" @click="load">刷新</a-button>
@@ -329,13 +333,15 @@ onMounted(() => {
     <a-alert v-if="templateTotal > templates.length" type="info" show-icon message="模板超过 100 个，下拉只含最近更新的 100 个。" />
     <a-alert v-if="templateError" type="error" show-icon :message="templateError" />
     <a-alert v-if="error" type="error" show-icon :message="error" />
+    <div ref="tableBox" class="table-fill">
     <a-table
+      bordered
       size="small"
       :loading="loading"
       :columns="columns"
       :data-source="items"
       :pagination="pagination"
-      :scroll="{ x: 1100 }"
+      :scroll="{ x: 1100, y: tableBodyHeight }"
       row-key="id"
       @change="onTableChange"
     >
@@ -362,6 +368,7 @@ onMounted(() => {
       </template>
       <template #emptyText>没有计划。创建后会显示下次触发时间；发生跳过后显示最近原因。</template>
     </a-table>
+    </div>
 
     <a-modal
       :open="modalOpen"
@@ -370,14 +377,14 @@ onMounted(() => {
       :ok-button-props="{ disabled: !!formBlockReason }"
       ok-text="保存"
       cancel-text="取消"
-      width="680px"
+      width="720px"
       @ok="save"
       @cancel="modalOpen = false"
     >
-      <a-alert v-if="formBlockReason" type="warning" show-icon :message="formBlockReason" style="margin-bottom: 12px" />
-      <p>保存后按服务器时间重算下次触发，不影响已经启动的实例。时间输入按本机时区换算成绝对时间。</p>
-      <a-form layout="vertical">
-        <a-form-item label="任务模板">
+      <a-alert v-if="formBlockReason" type="warning" show-icon :message="formBlockReason" style="margin-bottom: 8px" />
+      <p class="hint" style="margin-bottom: 8px">保存后按服务器时间重算下次触发，不影响已经启动的实例。时间输入按本机时区换算成绝对时间。</p>
+      <a-form layout="vertical" class="form-grid">
+        <a-form-item class="span-2" label="任务模板">
           <a-select v-model:value="form.taskId" placeholder="选择有限时长模板">
             <a-select-option
               v-if="form.taskId && !templates.some((item) => item.id === form.taskId)"
@@ -413,7 +420,7 @@ onMounted(() => {
           <a-form-item label="本地时间">
             <a-input v-model:value="form.localTime" placeholder="09:00:00" />
           </a-form-item>
-          <a-form-item v-if="form.type === 'WEEKLY'" label="星期">
+          <a-form-item v-if="form.type === 'WEEKLY'" class="span-2" label="星期">
             <a-checkbox-group v-model:value="form.weekdays" :options="weekdayOptions" />
           </a-form-item>
         </template>

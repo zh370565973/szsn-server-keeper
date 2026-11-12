@@ -82,7 +82,9 @@ function connect() {
       healthyForMs: current?.healthyForMs,
       latchResetReady: current?.latchResetReady,
       activeExecution: current?.activeExecution,
-      cpu: current?.cpu
+      cpu: current?.cpu,
+      memory: current?.memory,
+      budget: current?.budget
     }
   })
   source.onerror = () => {

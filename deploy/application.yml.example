@@ -1,5 +1,5 @@
-# install.sh 在配置文件不存在时复制本文件，并把 __DATA__、__LOG__ 换成实际目录。
-# 已存在的 /etc/server-resource-manager/application.yml 不会被覆盖。
+# install.sh 在配置文件不存在时复制本文件，并把 __PREFIX__、__ETC__、__DATA__、__LOG__ 换成实际目录。
+# 已存在的 application.yml 不会被覆盖。这些路径改完后要重启服务才生效。
 server:
   address: 127.0.0.1
   port: 8080
@@ -15,10 +15,12 @@ spring:
   application:
     name: server-resource-manager
   datasource:
-    url: "jdbc:h2:file:__DATA__/srm;DB_CLOSE_ON_EXIT=FALSE;AUTO_SERVER=FALSE"
+    url: "jdbc:h2:file:${srm.data-dir}/srm;DB_CLOSE_ON_EXIT=FALSE;AUTO_SERVER=FALSE"
     driver-class-name: org.h2.Driver
-    username: sa
-    password: ""
+    # 内嵌 H2 账号，一般不改。不能用来登录控制页。
+    # 改用户名或密码不会改写已经建好的库。
+    username: srm_db_k4n8
+    password: "Hk7mQ2vL9pR4wX8nB3cF6"
     hikari:
       maximum-pool-size: 4
       minimum-idle: 1
@@ -31,13 +33,22 @@ spring:
 
 srm:
   timezone: Asia/Shanghai
+  # 数据库目录，也是设置页里的 data。改目录后重启会在新路径建空库，旧文件留在原地。
   data-dir: "__DATA__"
+  # jar 只展示安装位置。config 是启动时再读一次的配置文件，同名项盖过 JAR 内默认值。log 是日志目录。
+  deploy:
+    jar: "__PREFIX__"
+    config: "__ETC__/application.yml"
+    log: "__LOG__"
   admin:
+    # 控制页唯一登录用户。password 非空时用它登录，一般不改。
     username: admin
-    password-file: "__DATA__/admin.password"
+    password: "Adm#K8pQ3mN7vR2xL5"
+    # 仅当 password 留空时，init-admin 把 BCrypt 哈希写到这里。
+    password-file: "${srm.data-dir}/admin.password"
   remote:
     cidr: ""
 
 logging:
   file:
-    name: "__LOG__/srm.log"
+    name: ${srm.deploy.log}/srm.log

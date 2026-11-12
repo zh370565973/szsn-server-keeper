@@ -8,8 +8,32 @@ import { api, setUnauthorizedHandler } from './api'
 const router = useRouter()
 const ready = ref(false)
 const uiTheme = {
-  algorithm: theme.darkAlgorithm,
-  token: { colorPrimary: '#3cbaa2', colorBgBase: '#10151c', borderRadius: 8 }
+  algorithm: theme.defaultAlgorithm,
+  token: {
+    colorPrimary: '#0C7CFF',
+    colorBgLayout: '#f5f7f9',
+    borderRadius: 6,
+    fontSize: 15,
+    fontSizeSM: 14,
+    fontFamily: '"Microsoft YaHei", "微软雅黑", "PingFang SC", sans-serif'
+  },
+  components: {
+    Layout: {
+      headerBg: '#0C7CFF',
+      headerColor: '#ffffff',
+      headerHeight: 56,
+      bodyBg: '#f5f7f9',
+      siderBg: '#ffffff',
+      lightSiderBg: '#ffffff'
+    },
+    Menu: {
+      itemBg: '#ffffff',
+      itemColor: '#3e3e3e',
+      itemHoverBg: '#f5f7fa',
+      itemSelectedBg: '#e6f7ff',
+      itemSelectedColor: '#0C7CFF'
+    }
+  }
 }
 
 setUnauthorizedHandler(() => {

@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api, explainError, type ExecutionDetail, type ExecutionSummary, type PageResult } from '../api'
+import { useTableBodyHeight } from '../fillHeight'
 import { epochFromLocal, formatBytes, formatMillis, formatPercent, formatTime } from '../format'
 import { EXECUTION_STATUSES, reasonLabel, statusLabel } from '../labels'
 
+const tableBox = ref<HTMLElement>()
+const tableBodyHeight = useTableBodyHeight(tableBox)
 const loading = ref(false)
 const detailLoading = ref(false)
 const error = ref('')
@@ -61,7 +64,8 @@ const pagination = computed(() => ({
   total: total.value,
   showSizeChanger: true,
   pageSizeOptions: ['20', '50', '100'],
-  showTotal: (value: number) => `共 ${value} 条`
+  showTotal: (value: number) => `共 ${value} 条`,
+  size: 'small'
 }))
 
 const snapshotText = computed(() => {
@@ -207,8 +211,8 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="page">
-    <a-card size="small">
+  <div class="page page-fill">
+    <a-card size="small" class="shrink">
       <div class="status-row">
         <a-select v-model:value="filters.status" allow-clear placeholder="全部状态" style="width: 160px">
           <a-select-option value="">全部状态</a-select-option>
@@ -223,16 +227,18 @@ onMounted(load)
         <a-button type="primary" :loading="loading" @click="search">查询</a-button>
         <a-button @click="resetFilters">重置</a-button>
       </div>
-      <p>时间按开始、结束或计划触发时间过滤。整机内存使用和负载持有分开显示，不混称内存占用。</p>
+      <p class="hint filter-note">时间按开始、结束或计划触发时间过滤。整机内存使用和负载持有分开显示，不混称内存占用。</p>
     </a-card>
     <a-alert v-if="error" type="error" show-icon :message="error" />
+    <div ref="tableBox" class="table-fill">
     <a-table
+      bordered
       size="small"
       :loading="loading"
       :columns="columns"
       :data-source="items"
       :pagination="pagination"
-      :scroll="{ x: 900 }"
+      :scroll="{ x: 900, y: tableBodyHeight }"
       row-key="id"
       @change="onTableChange"
     >
@@ -248,8 +254,9 @@ onMounted(load)
       </template>
       <template #emptyText>没有符合条件的执行记录</template>
     </a-table>
+    </div>
 
-    <a-drawer :open="drawerOpen" title="执行详情" width="640" @close="drawerOpen = false">
+    <a-drawer :open="drawerOpen" title="执行详情" width="760" @close="drawerOpen = false">
       <a-spin :spinning="detailLoading">
         <a-alert v-if="detailError" type="error" show-icon :message="detailError" />
         <template v-else-if="detail">
@@ -260,7 +267,7 @@ onMounted(load)
             message="这条记录在重启时被标为中断。实际停止时间未知，下面的时长不是精确运行时间。"
             style="margin-bottom: 12px"
           />
-          <a-descriptions :column="1" size="small" bordered>
+          <a-descriptions :column="2" size="small" bordered>
             <a-descriptions-item label="状态">{{ statusLabel(detail.execution.status) }}</a-descriptions-item>
             <a-descriptions-item label="原因">{{ reasonText(detail.execution) }}</a-descriptions-item>
             <a-descriptions-item label="开始">{{ formatTime(detail.execution.startedAt) }}</a-descriptions-item>
@@ -282,17 +289,22 @@ onMounted(load)
             show-icon
             message="快照不是合法 JSON，下面保留原文。"
           />
-          <a-descriptions v-else-if="detail.configSnapshot" :column="1" size="small">
+          <a-descriptions v-else-if="detail.configSnapshot" :column="2" size="small" bordered>
             <a-descriptions-item v-for="(value, key) in detail.configSnapshot" :key="key" :label="snapshotLabels[key] ?? key">
               {{ snapshotValue(String(key), value) }}
             </a-descriptions-item>
           </a-descriptions>
-          <pre class="snapshot">{{ snapshotText }}</pre>
+          <a-collapse v-if="detail.configSnapshotReadable" ghost class="raw-snapshot">
+            <a-collapse-panel key="raw" header="快照原文">
+              <pre class="snapshot">{{ snapshotText }}</pre>
+            </a-collapse-panel>
+          </a-collapse>
+          <pre v-else class="snapshot">{{ snapshotText }}</pre>
 
           <h3>有效统计</h3>
           <a-alert v-if="!detail.statsReadable" type="error" show-icon message="统计摘要无法读取" />
           <p v-else-if="statEntries.length === 0">还没有有效统计。空采样不计入均值。</p>
-          <a-descriptions v-else :column="1" size="small">
+          <a-descriptions v-else :column="2" size="small" bordered>
             <a-descriptions-item v-for="entry in statEntries" :key="entry.key" :label="entry.label">
               {{ statText(entry.key, entry.value) }}
             </a-descriptions-item>
@@ -322,7 +334,13 @@ onMounted(load)
 
 <style scoped>
 h3 {
-  margin: 16px 0 8px;
+  margin: 12px 0 6px;
+}
+.filter-note {
+  margin-top: 6px;
+}
+.raw-snapshot {
+  margin-top: 4px;
 }
 .snapshot {
   white-space: pre-wrap;

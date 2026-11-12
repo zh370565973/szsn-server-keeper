@@ -9,11 +9,14 @@ import {
   type PageResult,
   type TaskTemplate
 } from '../api'
+import { useTableBodyHeight } from '../fillHeight'
 import { formatBytes, formatDuration, formatTime } from '../format'
 import { memoryModeLabel, resourceModeLabel, runModeLabel, scheduleTypeLabel, statusLabel } from '../labels'
 import { monitor } from '../monitor'
 
 const MIB = 1024 * 1024
+const tableBox = ref<HTMLElement>()
+const tableBodyHeight = useTableBodyHeight(tableBox)
 const loading = ref(false)
 const saving = ref(false)
 const runningId = ref('')
@@ -55,7 +58,8 @@ const pagination = computed(() => ({
   total: total.value,
   showSizeChanger: true,
   pageSizeOptions: ['20', '50', '100'],
-  showTotal: (value: number) => `共 ${value} 条`
+  showTotal: (value: number) => `共 ${value} 条`,
+  size: 'small'
 }))
 
 const runBlockReason = computed(() => {
@@ -335,8 +339,8 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="page">
-    <a-card size="small">
+  <div class="page page-fill">
+    <a-card size="small" class="shrink">
       <div class="status-row">
         <span>修改模板不会改变已经启动的实例。被计划引用时不能删除。</span>
         <a-input-search
@@ -352,19 +356,25 @@ onMounted(load)
     </a-card>
     <a-alert v-if="runBlockReason" type="warning" show-icon :message="`立即运行不可用：${runBlockReason}`" />
     <a-alert v-if="error" type="error" show-icon :message="error" />
+    <div ref="tableBox" class="table-fill">
     <a-table
+      bordered
       size="small"
       :loading="loading"
       :columns="columns"
       :data-source="items"
       :pagination="pagination"
-      :scroll="{ x: 980 }"
+      :scroll="{ x: 980, y: tableBodyHeight }"
       row-key="id"
       @change="onTableChange"
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'mode'">
-          {{ resourceModeLabel(record.resourceMode) }} / {{ targetText(record) }}
+          <a-tooltip v-if="record.resourceMode === 'COMBINED'" title="两边一起压。有一边没起来，两边一起停。">
+            <span>{{ resourceModeLabel(record.resourceMode) }}</span>
+          </a-tooltip>
+          <template v-else>{{ resourceModeLabel(record.resourceMode) }}</template>
+          / {{ targetText(record) }}
         </template>
         <template v-else-if="column.key === 'run'">
           {{ runModeLabel(record.runMode) }}
@@ -388,6 +398,7 @@ onMounted(load)
       </template>
       <template #emptyText>没有模板。可以创建一条，搜索无结果时也会显示这里。</template>
     </a-table>
+    </div>
 
     <a-modal
       :open="modalOpen"
@@ -396,24 +407,28 @@ onMounted(load)
       :ok-button-props="{ disabled: !!formBlockReason }"
       ok-text="保存"
       cancel-text="取消"
-      width="640px"
+      width="720px"
       @ok="save"
       @cancel="modalOpen = false"
     >
-      <a-alert v-if="formBlockReason" type="warning" show-icon :message="formBlockReason" style="margin-bottom: 12px" />
-      <a-form layout="vertical">
+      <a-alert v-if="formBlockReason" type="warning" show-icon :message="formBlockReason" style="margin-bottom: 8px" />
+      <a-form layout="vertical" class="form-grid">
         <a-form-item label="名称">
           <a-input v-model:value="form.name" :maxlength="64" placeholder="1 到 64 个字符" />
-        </a-form-item>
-        <a-form-item label="说明">
-          <a-textarea v-model:value="form.description" :maxlength="500" :rows="2" show-count />
         </a-form-item>
         <a-form-item label="资源">
           <a-radio-group v-model:value="form.resourceMode">
             <a-radio-button value="CPU">CPU</a-radio-button>
             <a-radio-button value="MEMORY">内存</a-radio-button>
-            <a-radio-button value="COMBINED">联合</a-radio-button>
+            <a-radio-button value="COMBINED">
+              <a-tooltip title="两边一起压。有一边没起来，两边一起停。">
+                <span>联合</span>
+              </a-tooltip>
+            </a-radio-button>
           </a-radio-group>
+        </a-form-item>
+        <a-form-item class="span-2" label="说明">
+          <a-textarea v-model:value="form.description" :maxlength="500" :rows="2" show-count />
         </a-form-item>
         <a-form-item v-if="form.resourceMode !== 'MEMORY'" label="CPU 目标（1–60）">
           <a-input-number v-model:value="form.cpuTargetPct" :min="1" :max="60" :step="1" style="width: 160px" />
@@ -441,7 +456,7 @@ onMounted(load)
         <a-form-item v-if="form.runMode === 'FINITE'" label="时长（秒，10 秒到 7 天）">
           <a-input-number v-model:value="form.durationSeconds" :min="10" :precision="0" style="width: 180px" />
         </a-form-item>
-        <p v-else>持续任务没有自动停止时间，只能手动停止或紧急停止。</p>
+        <p v-else class="hint span-2">持续任务没有自动停止时间，只能手动停止或紧急停止。</p>
       </a-form>
     </a-modal>
   </div>

@@ -31,6 +31,7 @@ class ApiIntegrationTest {
         Path file = Path.of("target", "test-admin.password");
         Files.createDirectories(file.getParent());
         Files.writeString(file, new BCryptPasswordEncoder().encode("test-password-1"));
+        registry.add("srm.admin.password", () -> "");
         registry.add("srm.admin.password-file", () -> file.toAbsolutePath().toString());
         registry.add("srm.data-dir", () -> Path.of("target", "srm-it-data").toAbsolutePath().toString());
         registry.add("spring.datasource.url", () -> "jdbc:h2:mem:srmit;DB_CLOSE_DELAY=-1;MODE=REGULAR;AUTO_SERVER=FALSE");

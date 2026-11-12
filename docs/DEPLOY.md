@@ -34,7 +34,7 @@ sha256sum server-resource-manager.jar
 
 ## 安装和初始化
 
-需要 Linux、root，以及 JDK 17。脚本只创建 `srm` 用户和目录，不写管理员口令，也不启动服务。
+需要 Linux、root，以及 JDK 17。脚本只创建 `srm` 用户和目录，不启动服务。管理员口令在安装复制的 `application.yml` 里，`srm.admin.password` 非空时直接登录。只有把这项留空时才执行下面的 `init-admin`。
 
 ```text
 sudo bash deploy/install.sh --jar "$PWD/server-resource-manager.jar"
@@ -44,7 +44,7 @@ sudo -u srm java -jar /opt/server-resource-manager/server-resource-manager.jar \
 sudo systemctl start server-resource-manager
 ```
 
-口令只从终端读取，不写进命令行。默认只监听 `127.0.0.1:8080`。改成非回环地址时，必须同时配置内置 HTTPS 证书和 `srm.remote.cidr`，否则进程拒绝启动。
+`init-admin` 的口令只从终端读取，不写进命令行。默认配置已经有口令，可以直接启动服务。默认只监听 `127.0.0.1:8080`。改成非回环地址时，必须同时配置内置 HTTPS 证书和 `srm.remote.cidr`，否则进程拒绝启动。
 
 安装路径：
 

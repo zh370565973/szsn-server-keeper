@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { api, type HistoryView } from '../api'
+import { useTableBodyHeight } from '../fillHeight'
 import { formatBytes, formatPercent, formatTime } from '../format'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -10,6 +11,8 @@ const presets = [
   { label: '7 天内', ms: 7 * DAY - 60_000 },
   { label: '含过期', ms: 8 * DAY }
 ]
+const tableBox = ref<HTMLElement>()
+const tableBodyHeight = useTableBodyHeight(tableBox)
 const loading = ref(false)
 const error = ref('')
 const view = ref<HistoryView>()
@@ -47,13 +50,10 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="page">
-    <a-card size="small">
+  <div class="page page-fill">
+    <a-card size="small" class="shrink">
       <div class="status-row">
-        <span>服务端自动限制在 2000 个桶以内。监控曲线保留 7 天，过期后不再显示曲线，执行记录里的摘要仍然保留。</span>
-        <a-button type="primary" :loading="loading" @click="load">刷新</a-button>
-      </div>
-      <div class="status-row">
+        <span class="hint">服务端自动限制在 2000 个桶以内。监控曲线保留 7 天，过期后不再显示曲线，执行记录里的摘要仍然保留。</span>
         <a-button
           v-for="preset in presets"
           :key="preset.label"
@@ -63,8 +63,9 @@ onMounted(load)
         >
           {{ preset.label }}
         </a-button>
+        <a-button type="primary" size="small" :loading="loading" @click="load">刷新</a-button>
       </div>
-      <p v-if="view">实际桶宽 {{ view.bucketSeconds }} 秒。没有返回的时间段表示没有有效样本。</p>
+      <p v-if="view" class="hint bucket-note">实际桶宽 {{ view.bucketSeconds }} 秒。没有返回的时间段表示没有有效样本。</p>
     </a-card>
     <a-alert
       v-if="view?.pastRetention"
@@ -73,16 +74,25 @@ onMounted(load)
       message="查询起点已超过 7 天曲线保留期。过期曲线已清理，执行摘要仍留在执行记录中。"
     />
     <a-alert v-if="error" type="error" show-icon :message="error" />
-    <a-table
-      size="small"
-      :loading="loading"
-      :columns="columns"
-      :data-source="view?.buckets ?? []"
-      :pagination="{ pageSize: 20 }"
-      :scroll="{ x: 900 }"
-      row-key="bucketStart"
-    >
-      <template #emptyText>这段时间没有有效聚合数据</template>
-    </a-table>
+    <div ref="tableBox" class="table-fill">
+      <a-table
+        bordered
+        size="small"
+        :loading="loading"
+        :columns="columns"
+        :data-source="view?.buckets ?? []"
+        :pagination="{ pageSize: 20, size: 'small' }"
+        :scroll="{ x: 900, y: tableBodyHeight }"
+        row-key="bucketStart"
+      >
+        <template #emptyText>这段时间没有有效聚合数据</template>
+      </a-table>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.bucket-note {
+  margin-top: 6px;
+}
+</style>

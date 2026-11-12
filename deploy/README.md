@@ -25,7 +25,7 @@ sudo bash install.sh --jar /path/server-resource-manager.jar
 
 安装会打印内核、内存、JDK、磁盘和 cgroup。控制能力由服务启动时诊断，脚本不会把它写成已通过。配置文件已存在时不覆盖。
 
-安装不会启动服务，也不会写入默认口令。下一步：
+安装不会启动服务。配置里的 `srm.admin.password` 就是唯一管理员口令，非空时直接登录，不必再执行 `init-admin`。只有把这项留空时才需要：
 
 ```text
 sudo -u srm java -jar /opt/server-resource-manager/server-resource-manager.jar \
@@ -34,7 +34,7 @@ sudo -u srm java -jar /opt/server-resource-manager/server-resource-manager.jar \
 sudo systemctl start server-resource-manager
 ```
 
-口令只从终端读取。默认只监听 `127.0.0.1:8080`。改成非回环地址时，必须同时配置内置 HTTPS 证书和 `srm.remote.cidr`，否则进程拒绝启动。
+`init-admin` 的口令只从终端读取。默认配置已经有口令，直接 `systemctl start` 即可。默认只监听 `127.0.0.1:8080`。改成非回环地址时，必须同时配置内置 HTTPS 证书和 `srm.remote.cidr`，否则进程拒绝启动。
 
 ## systemd
 
