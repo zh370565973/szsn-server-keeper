@@ -12,8 +12,8 @@ import java.util.List;
  */
 public final class KeyMetricHealth {
     public static final long FRESH_MS = 3_000;
-    public static final double CPU_LATCH_PCT = 95D;
-    public static final double HEAP_LATCH_RATIO = 0.85D;
+    public static final double CPU_LATCH_PCT = 97D;
+    public static final double HEAP_LATCH_RATIO = 0.95D;
     public static final double SWAP_RATE_LIMIT = 16D * Units.MIB;
 
     private KeyMetricHealth() {
@@ -49,13 +49,13 @@ public final class KeyMetricHealth {
         if (cpu == null || !Double.isFinite(cpu) || sample.cpuAgeMs() > FRESH_MS) {
             reasons.add("CPU_NOT_FRESH");
         } else if (cpu >= CPU_LATCH_PCT) {
-            reasons.add("CPU_GE_95");
+            reasons.add("CPU_GE_97");
         }
         Long available = sample.availableBytes();
         Long total = sample.memTotalBytes();
         if (available == null || total == null || available < 0 || total < 0 || sample.memAgeMs() > FRESH_MS) {
             reasons.add("MEMORY_NOT_FRESH");
-        } else if (available < MemoryBudget.systemReserve(total)) {
+        } else if (available < MemoryBudget.systemForbid(total)) {
             reasons.add("AVAILABLE_BELOW_RESERVE");
         }
         Long heapUsed = sample.heapUsedBytes();
@@ -63,7 +63,7 @@ public final class KeyMetricHealth {
         if (heapUsed == null || heapMax == null || heapUsed < 0 || heapMax <= 0) {
             reasons.add("HEAP_UNKNOWN");
         } else if (heapUsed.doubleValue() / heapMax.doubleValue() >= HEAP_LATCH_RATIO) {
-            reasons.add("HEAP_GE_85");
+            reasons.add("HEAP_GE_95");
         }
         if (sample.swapPresent() && sample.swapRateBytesPerSec() != null) {
             double rate = sample.swapRateBytesPerSec();

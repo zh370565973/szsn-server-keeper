@@ -242,9 +242,9 @@ class M2AcceptanceTest {
     @Test
     void at14PressureWindowsHysteresisAndLatchRequireManualReset() {
         ProtectionEvaluator evaluator = new ProtectionEvaluator();
-        assertFalse(evaluator.onSample(cpuSample(90)).zeroDuty());
-        assertFalse(evaluator.onSample(cpuSample(90)).zeroDuty());
-        assertTrue(evaluator.onSample(cpuSample(90)).zeroDuty());
+        assertFalse(evaluator.onSample(cpuSample(94)).zeroDuty());
+        assertFalse(evaluator.onSample(cpuSample(94)).zeroDuty());
+        assertTrue(evaluator.onSample(cpuSample(94)).zeroDuty());
         for (int i = 0; i < 9; i++) {
             assertTrue(evaluator.onSample(cpuSample(70)).zeroDuty());
         }
@@ -271,11 +271,11 @@ class M2AcceptanceTest {
         manager.markRunning("at14");
 
         for (int i = 0; i < 3; i++) {
-            loop.evaluate(snapshot(10 + i, clock.millis(), clock.millis(), 96D, List.of()));
+            loop.evaluate(snapshot(10 + i, clock.millis(), clock.millis(), 97D, List.of()));
             clock.advance(1_000);
         }
         assertTrue(control.state().emergencyLatched());
-        assertEquals("CPU_GE_95", control.state().latchReason());
+        assertEquals("CPU_GE_97", control.state().latchReason());
         assertEquals("OFF", control.state().controlSwitch());
         assertFalse(claim.permit().valid());
 

@@ -16,10 +16,11 @@ EnvironmentFile=/etc/server-resource-manager/layout.env
 ExecStart=/opt/server-resource-manager/srm-run
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=10
+TimeoutStopSec=30
 SuccessExitStatus=143
 KillMode=mixed
 KillSignal=SIGTERM
+OOMScoreAdjust=-500
 NoNewPrivileges=true
 PrivateTmp=true
 

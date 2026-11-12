@@ -228,6 +228,10 @@ export interface MemoryLoadView {
   heldBytes: number
   heapUsedBytes?: number | null
   rssBytes?: number | null
+  monitorHeapUsedBytes?: number | null
+  monitorRssBytes?: number | null
+  loadHeapUsedBytes?: number | null
+  loadRssBytes?: number | null
   paused?: boolean
   memoryMode?: string | null
   memoryTargetBytes?: number | null

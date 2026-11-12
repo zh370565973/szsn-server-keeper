@@ -71,26 +71,26 @@ class SafetyLoopTest {
         SessionClaim claim = harness.sessions.claim("exec-cpu");
         harness.sessions.markRunning("exec-cpu");
 
-        harness.loop.evaluate(cpu(1, harness.now.get(), 90));
+        harness.loop.evaluate(cpu(1, harness.now.get(), 94));
         assertFalse(harness.loop.current().zeroDuty());
         harness.advance(1_000);
-        harness.loop.evaluate(cpu(2, harness.now.get(), 90));
+        harness.loop.evaluate(cpu(2, harness.now.get(), 94));
         assertFalse(harness.loop.current().zeroDuty());
         harness.advance(1_000);
-        harness.loop.evaluate(cpu(3, harness.now.get(), 90));
+        harness.loop.evaluate(cpu(3, harness.now.get(), 94));
         assertTrue(harness.loop.current().zeroDuty());
         assertTrue(harness.loop.current().forbidCpuGrowth());
         assertFalse(harness.control.state().emergencyLatched());
 
         harness.advance(1_000);
-        harness.loop.evaluate(cpu(4, harness.now.get(), 96));
+        harness.loop.evaluate(cpu(4, harness.now.get(), 97));
         harness.advance(1_000);
-        harness.loop.evaluate(cpu(5, harness.now.get(), 96));
+        harness.loop.evaluate(cpu(5, harness.now.get(), 97));
         harness.advance(1_000);
-        harness.loop.evaluate(cpu(6, harness.now.get(), 96));
+        harness.loop.evaluate(cpu(6, harness.now.get(), 97));
 
         assertTrue(harness.control.state().emergencyLatched());
-        assertEquals("CPU_GE_95", harness.control.state().latchReason());
+        assertEquals("CPU_GE_97", harness.control.state().latchReason());
         assertEquals("OFF", harness.control.state().controlSwitch());
         assertFalse(claim.permit().valid());
         assertEquals(ExecutionStatus.STOPPING, harness.sessions.active().orElseThrow().status());
@@ -181,13 +181,13 @@ class SafetyLoopTest {
         Harness harness = harness(store);
         SessionClaim claim = harness.sessions.claim("exec-block");
         harness.sessions.markRunning("exec-block");
-        Thread worker = new Thread(() -> harness.loop.evaluate(cpu(1, harness.now.get(), 96)), "test-eval");
+        Thread worker = new Thread(() -> harness.loop.evaluate(cpu(1, harness.now.get(), 97)), "test-eval");
         // warm streaks then latch on third
-        harness.loop.evaluate(cpu(1, harness.now.get(), 96));
+        harness.loop.evaluate(cpu(1, harness.now.get(), 97));
         harness.advance(1_000);
-        harness.loop.evaluate(cpu(2, harness.now.get(), 96));
+        harness.loop.evaluate(cpu(2, harness.now.get(), 97));
         harness.advance(1_000);
-        worker = new Thread(() -> harness.loop.evaluate(cpu(3, harness.now.get(), 96)), "test-eval");
+        worker = new Thread(() -> harness.loop.evaluate(cpu(3, harness.now.get(), 97)), "test-eval");
         worker.start();
         assertTrue(store.entered.await(2, TimeUnit.SECONDS));
         assertFalse(claim.permit().valid());

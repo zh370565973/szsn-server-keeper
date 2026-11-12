@@ -66,7 +66,7 @@ sudo systemctl stop server-resource-manager
 sudo systemctl status server-resource-manager
 ```
 
-`Restart=on-failure`，间隔 5 秒，120 秒内最多启动 5 次。`systemctl stop` 是干净停止，不会被立刻拉起。进程每次启动时控制开关都是 OFF，未完成的负载不会恢复。
+`Restart=on-failure`，间隔 5 秒，120 秒内最多启动 5 次。`systemctl stop` 是干净停止，不会被立刻拉起。停止窗口 30 秒，同组里的负载子进程会一起退出。进程每次启动时控制开关都是 OFF，未完成的负载不会恢复。监控进程使用 `-Xms128m -Xmx512m`。大堆只出现在任务运行期间的负载子进程上，停止任务后该进程退出，物理内存交还系统。
 
 ## 备份、恢复和升级
 

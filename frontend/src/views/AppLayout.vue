@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
+import { switchLabel } from '../labels'
 import { monitor, refreshInfo, refreshResource, startStream, stopStream } from '../monitor'
 
 const route = useRoute()
@@ -126,7 +127,7 @@ async function emergency() {
             : '负载引擎未安装'
         }}</span>
         <a-tag v-if="monitor.resource?.emergencyLatched" color="error">急停已锁存</a-tag>
-        <a-tag>{{ monitor.resource?.controlSwitch ?? 'OFF' }}</a-tag>
+        <a-tag>{{ switchLabel(monitor.resource?.controlSwitch) }}</a-tag>
         <a-button danger :loading="stopping" @click="emergency">紧急停止</a-button>
         <a-button class="logout" @click="logout">退出</a-button>
       </div>

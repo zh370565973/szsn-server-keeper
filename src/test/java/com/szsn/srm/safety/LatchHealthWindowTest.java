@@ -36,9 +36,9 @@ class LatchHealthWindowTest {
         assertFalse(window.view().ready());
 
         window.observe(healthy(10_000));
-        window.observe(sample(11_000, 95D, 0, 4L * Units.GIB, 100L * Units.MIB, false, null));
+        window.observe(sample(11_000, 97D, 0, 4L * Units.GIB, 100L * Units.MIB, false, null));
         assertEquals(0, window.view().healthyForMs());
-        assertTrue(window.view().reasons().contains("CPU_GE_95"));
+        assertTrue(window.view().reasons().contains("CPU_GE_97"));
 
         window.observe(healthy(20_000));
         window.observe(healthy(19_000));
@@ -56,8 +56,8 @@ class LatchHealthWindowTest {
         assertTrue(reasons(sample(0, 20D, 3_001, 4L * Units.GIB, 100L * Units.MIB, false, null)).contains("CPU_NOT_FRESH"));
         assertTrue(reasons(sample(0, null, 0, 4L * Units.GIB, 100L * Units.MIB, false, null)).contains("CPU_NOT_FRESH"));
         assertTrue(reasons(sample(0, 20D, 0, Units.GIB, 100L * Units.MIB, false, null)).contains("AVAILABLE_BELOW_RESERVE"));
-        assertTrue(reasons(new KeyMetricSample(0, 20D, 0, 4L * Units.GIB, 8L * Units.GIB, 0, 850L, 1_000L, false, null))
-                .contains("HEAP_GE_85"));
+        assertTrue(reasons(new KeyMetricSample(0, 20D, 0, 4L * Units.GIB, 8L * Units.GIB, 0, 950L, 1_000L, false, null))
+                .contains("HEAP_GE_95"));
         assertTrue(reasons(sample(0, 20D, 0, 4L * Units.GIB, null, false, null)).contains("HEAP_UNKNOWN"));
         assertTrue(reasons(sample(0, 20D, 0, 4L * Units.GIB, 100L * Units.MIB, true, 16D * Units.MIB)).contains("SWAP_RATE"));
     }

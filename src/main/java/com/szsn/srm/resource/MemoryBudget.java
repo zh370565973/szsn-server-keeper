@@ -25,18 +25,29 @@ public final class MemoryBudget {
             List<String> limitingFactors) {
     }
 
+    /** 停止线：可用内存低于总内存 6%，至少留下 1 GiB。 */
     public static long systemReserve(long memTotalBytes) {
         if (memTotalBytes < 0) {
             throw new IllegalArgumentException("内存总量不能为负");
         }
-        return Math.max(memTotalBytes * 20 / 100, Units.GIB);
+        return Math.max(memTotalBytes * LoadBounds.SYSTEM_STOP_PERCENT / 100, Units.GIB);
+    }
+
+    /**
+     * 不再增加的水位。大机器大约是总内存的 7%；和小机器的 1 GiB 底线重合时，
+     * 至少比停止线高出一个保护量，避免一碰到就锁存。
+     */
+    public static long systemForbid(long memTotalBytes) {
+        long stop = systemReserve(memTotalBytes);
+        long byPercent = Math.max(memTotalBytes * LoadBounds.SYSTEM_FORBID_PERCENT / 100, Units.GIB);
+        return Math.max(byPercent, stop + Units.GUARD);
     }
 
     public static long heapReserve(long heapMaxBytes) {
         if (heapMaxBytes <= 0) {
             return 256L * Units.MIB;
         }
-        return Math.max(heapMaxBytes / 4, 256L * Units.MIB);
+        return Math.max(heapMaxBytes * LoadBounds.HEAP_RESERVE_PERCENT / 100, 256L * Units.MIB);
     }
 
     public static Result compute(Input input) {
@@ -46,15 +57,15 @@ public final class MemoryBudget {
         if (input.taskCapBytes() <= 0) {
             throw new IllegalArgumentException("任务上限必须为正");
         }
-        long systemReserve = systemReserve(input.memTotalBytes());
+        long systemReserve = systemForbid(input.memTotalBytes());
         long heapReserve = heapReserve(input.heapMaxBytes());
         List<String> factors = new ArrayList<>();
         if (input.heapMaxBytes() <= 0) {
             factors.add("HEAP_MAX_UNAVAILABLE");
             return new Result(0, systemReserve, heapReserve, 0, List.copyOf(factors));
         }
-        long loadCap = Math.min(input.taskCapBytes(), input.heapMaxBytes() / 2);
-        long systemRoom = input.memAvailableBytes() - systemReserve - Units.GUARD;
+        long loadCap = Math.min(input.taskCapBytes(), input.heapMaxBytes() * LoadBounds.HEAP_LOAD_PERCENT / 100);
+        long systemRoom = input.memAvailableBytes() - systemReserve;
         long heapRoom = input.heapMaxBytes() - input.heapUsedBytes() - heapReserve - Units.GUARD;
         long taskRoom = loadCap - input.heldBytes();
         long raw = Math.min(systemRoom, Math.min(heapRoom, taskRoom));

@@ -52,7 +52,7 @@ class TaskTemplateServiceTest {
                 {"name":"越界","resourceMode":"CPU","cpuTargetPct":0,"runMode":"FINITE","durationSeconds":60}
                 """);
         assertInvalid(fixture, """
-                {"name":"越界","resourceMode":"CPU","cpuTargetPct":61,"runMode":"FINITE","durationSeconds":60}
+                {"name":"越界","resourceMode":"CPU","cpuTargetPct":91,"runMode":"FINITE","durationSeconds":60}
                 """);
         assertInvalid(fixture, """
                 {"name":"带内存","resourceMode":"CPU","cpuTargetPct":30,"memoryMode":"EXTRA_BYTES","memoryTargetBytes":4194304,"runMode":"FINITE","durationSeconds":60}

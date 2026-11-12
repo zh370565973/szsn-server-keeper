@@ -6,7 +6,11 @@ public final class Units {
     public static final long GIB = 1024L * MIB;
     public static final long BLOCK = 4L * MIB;
     public static final long GUARD = 64L * MIB;
-    public static final long DEFAULT_TASK_CAP = 512L * MIB;
+    /**
+     * 任务字节上限。页面按百分比设目标，实际能占多少由实时预算决定。
+     * 这个值只避免失控请求，不应当在 90% 目标之前先卡住。
+     */
+    public static final long DEFAULT_TASK_CAP = 512L * GIB;
     public static final long DISK_FLOOR = 256L * MIB;
     /** 内存负载增长上限（PRD：32 MiB/s）。 */
     public static final long MEMORY_GROWTH_BYTES_PER_SEC = 32L * MIB;

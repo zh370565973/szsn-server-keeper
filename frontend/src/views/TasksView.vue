@@ -13,8 +13,6 @@ import { useTableBodyHeight } from '../fillHeight'
 import { formatBytes, formatDuration, formatTime } from '../format'
 import { memoryModeLabel, resourceModeLabel, runModeLabel, scheduleTypeLabel, statusLabel } from '../labels'
 import { monitor } from '../monitor'
-
-const MIB = 1024 * 1024
 const tableBox = ref<HTMLElement>()
 const tableBodyHeight = useTableBodyHeight(tableBox)
 const loading = ref(false)
@@ -22,6 +20,7 @@ const saving = ref(false)
 const runningId = ref('')
 const error = ref('')
 const modalOpen = ref(false)
+const legacyBytes = ref<number | null>(null)
 const items = ref<TaskTemplate[]>([])
 const page = ref(1)
 const pageSize = ref(20)
@@ -35,10 +34,8 @@ const form = reactive({
   name: '',
   description: '',
   resourceMode: 'CPU' as 'CPU' | 'MEMORY' | 'COMBINED',
-  cpuTargetPct: 30 as number | null,
-  memoryMode: 'EXTRA_BYTES' as 'EXTRA_BYTES' | 'SYSTEM_PERCENT',
-  memoryTargetMib: 256 as number | null,
-  memoryTargetPct: 40 as number | null,
+  cpuTargetPct: 90 as number | null,
+  memoryTargetPct: 90 as number | null,
   runMode: 'FINITE' as 'FINITE' | 'CONTINUOUS',
   durationSeconds: 300 as number | null
 })
@@ -95,21 +92,14 @@ const formBlockReason = computed(() => {
   }
   if (form.resourceMode !== 'MEMORY') {
     const cpu = form.cpuTargetPct
-    if (cpu == null || cpu < 1 || cpu > 60) {
-      return 'CPU 目标必须在 1 到 60 之间'
+    if (cpu == null || cpu < 1 || cpu > 90) {
+      return 'CPU 目标必须在 1 到 90 之间'
     }
   }
   if (form.resourceMode !== 'CPU') {
-    if (form.memoryMode === 'EXTRA_BYTES') {
-      const mib = form.memoryTargetMib
-      if (mib == null || !Number.isInteger(mib) || mib < 4 || mib % 4 !== 0) {
-        return '额外容量必须是 4MiB 的整数倍'
-      }
-    } else {
-      const pct = form.memoryTargetPct
-      if (pct == null || pct < 1 || pct > 70) {
-        return '系统占用目标必须在 1 到 70 之间'
-      }
+    const pct = form.memoryTargetPct
+    if (pct == null || pct < 1 || pct > 90) {
+      return '系统占用目标必须在 1 到 90 之间'
     }
   }
   if (form.runMode === 'FINITE') {
@@ -136,15 +126,14 @@ function targetText(task: TaskTemplate) {
 }
 
 function resetForm() {
+  legacyBytes.value = null
   form.id = ''
   form.version = 1
   form.name = ''
   form.description = ''
   form.resourceMode = 'CPU'
-  form.cpuTargetPct = 30
-  form.memoryMode = 'EXTRA_BYTES'
-  form.memoryTargetMib = 256
-  form.memoryTargetPct = 40
+  form.cpuTargetPct = 90
+  form.memoryTargetPct = 90
   form.runMode = 'FINITE'
   form.durationSeconds = 300
 }
@@ -161,10 +150,9 @@ function openEdit(task: TaskTemplate) {
   form.name = task.name
   form.description = task.description ?? ''
   form.resourceMode = task.resourceMode === 'MEMORY' || task.resourceMode === 'COMBINED' ? task.resourceMode : 'CPU'
-  form.cpuTargetPct = task.cpuTargetPct ?? 30
-  form.memoryMode = task.memoryMode === 'SYSTEM_PERCENT' ? 'SYSTEM_PERCENT' : 'EXTRA_BYTES'
-  form.memoryTargetMib = task.memoryTargetBytes != null ? task.memoryTargetBytes / MIB : 256
-  form.memoryTargetPct = task.memoryTargetPct ?? 40
+  form.cpuTargetPct = task.cpuTargetPct ?? 90
+  form.memoryTargetPct = task.memoryTargetPct ?? 90
+  legacyBytes.value = task.memoryMode === 'EXTRA_BYTES' ? task.memoryTargetBytes ?? null : null
   form.runMode = task.runMode === 'CONTINUOUS' ? 'CONTINUOUS' : 'FINITE'
   form.durationSeconds = task.durationSeconds ?? 300
   modalOpen.value = true
@@ -184,10 +172,11 @@ function payload() {
     body.cpuTargetPct = form.cpuTargetPct
   }
   if (form.resourceMode !== 'CPU') {
-    body.memoryMode = form.memoryMode
-    if (form.memoryMode === 'EXTRA_BYTES') {
-      body.memoryTargetBytes = (form.memoryTargetMib ?? 0) * MIB
+    if (legacyBytes.value != null) {
+      body.memoryMode = 'EXTRA_BYTES'
+      body.memoryTargetBytes = legacyBytes.value
     } else {
+      body.memoryMode = 'SYSTEM_PERCENT'
       body.memoryTargetPct = form.memoryTargetPct
     }
   }
@@ -430,23 +419,13 @@ onMounted(load)
         <a-form-item class="span-2" label="说明">
           <a-textarea v-model:value="form.description" :maxlength="500" :rows="2" show-count />
         </a-form-item>
-        <a-form-item v-if="form.resourceMode !== 'MEMORY'" label="CPU 目标（1–60）">
-          <a-input-number v-model:value="form.cpuTargetPct" :min="1" :max="60" :step="1" style="width: 160px" />
+        <a-form-item v-if="form.resourceMode !== 'MEMORY'" label="CPU 目标（1–90%）">
+          <a-input-number v-model:value="form.cpuTargetPct" :min="1" :max="90" :step="1" style="width: 160px" />
         </a-form-item>
-        <template v-if="form.resourceMode !== 'CPU'">
-          <a-form-item label="内存方式">
-            <a-radio-group v-model:value="form.memoryMode">
-              <a-radio-button value="EXTRA_BYTES">额外容量</a-radio-button>
-              <a-radio-button value="SYSTEM_PERCENT">系统占用</a-radio-button>
-            </a-radio-group>
-          </a-form-item>
-          <a-form-item v-if="form.memoryMode === 'EXTRA_BYTES'" label="额外容量（MiB，4 的倍数）">
-            <a-input-number v-model:value="form.memoryTargetMib" :min="4" :step="4" :precision="0" style="width: 160px" />
-          </a-form-item>
-          <a-form-item v-else label="系统占用（1–70）">
-            <a-input-number v-model:value="form.memoryTargetPct" :min="1" :max="70" :step="1" style="width: 160px" />
-          </a-form-item>
-        </template>
+        <a-form-item v-if="form.resourceMode !== 'CPU'" label="整机内存占用（1–90%）">
+          <a-input-number v-model:value="form.memoryTargetPct" :min="1" :max="90" :step="1" style="width: 160px" :disabled="legacyBytes != null" />
+          <p v-if="legacyBytes != null" class="hint">这条模板按固定容量保存，保存时仍用原来的字节数。新建模板只按百分比。</p>
+        </a-form-item>
         <a-form-item label="时长">
           <a-radio-group v-model:value="form.runMode">
             <a-radio-button value="FINITE">限时</a-radio-button>

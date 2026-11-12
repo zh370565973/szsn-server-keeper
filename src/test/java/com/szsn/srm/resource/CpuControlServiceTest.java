@@ -228,7 +228,7 @@ class CpuControlServiceTest {
                 "{\"resourceMode\":\"CPU\",\"cpuTargetPct\":30,\"runMode\":\"FINITE\",\"durationSeconds\":2}",
                 "{\"resourceMode\":\"CPU\",\"cpuTargetPct\":30,\"runMode\":\"FINITE\",\"durationSeconds\":604801}",
                 "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"SYSTEM_PERCENT\",\"memoryTargetPct\":0,\"runMode\":\"FINITE\",\"durationSeconds\":10}",
-                "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"SYSTEM_PERCENT\",\"memoryTargetPct\":70.5,\"runMode\":\"CONTINUOUS\"}",
+                "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"SYSTEM_PERCENT\",\"memoryTargetPct\":90.5,\"runMode\":\"CONTINUOUS\"}",
                 "{\"resourceMode\":\"COMBINED\",\"cpuTargetPct\":30,\"memoryMode\":\"EXTRA_BYTES\",\"memoryTargetBytes\":5242880,\"runMode\":\"CONTINUOUS\"}"
         };
         for (String body : rejected) {

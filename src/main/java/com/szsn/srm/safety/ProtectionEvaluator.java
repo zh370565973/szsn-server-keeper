@@ -1,6 +1,7 @@
 package com.szsn.srm.safety;
 
 import com.szsn.srm.common.Units;
+import com.szsn.srm.resource.LoadBounds;
 import com.szsn.srm.resource.MemoryBudget;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,9 +15,9 @@ public final class ProtectionEvaluator {
     private static final long STALE_STOP_MS = 10_000;
     private static final double SWAP_RATE = 16D * Units.MIB;
 
-    private int cpu85Streak;
-    private int cpu95Streak;
-    private int below75Streak;
+    private int cpuPressureStreak;
+    private int cpuLatchStreak;
+    private int belowRecoverStreak;
     private boolean cpuPressure;
     private int stealHighStreak;
     private int stealLowStreak;
@@ -49,25 +50,25 @@ public final class ProtectionEvaluator {
         boolean cpuValid = sample.cpuBusyPct() != null && sample.cpuAgeMs() <= STALE_FORBID_MS;
         if (cpuValid) {
             double cpu = sample.cpuBusyPct();
-            cpu95Streak = cpu >= 95 ? cpu95Streak + 1 : 0;
-            cpu85Streak = cpu >= 85 ? cpu85Streak + 1 : 0;
-            below75Streak = cpu < 75 ? below75Streak + 1 : 0;
-            if (cpu95Streak >= 3) {
+            cpuLatchStreak = cpu >= LoadBounds.CPU_LATCH_PCT ? cpuLatchStreak + 1 : 0;
+            cpuPressureStreak = cpu >= LoadBounds.CPU_DUTY_ZERO_PCT ? cpuPressureStreak + 1 : 0;
+            belowRecoverStreak = cpu < LoadBounds.CPU_RECOVER_BELOW_PCT ? belowRecoverStreak + 1 : 0;
+            if (cpuLatchStreak >= 3) {
                 stop = true;
                 latch = true;
                 zeroDuty = true;
-                reasons.add("CPU_GE_95");
+                reasons.add("CPU_GE_97");
             }
-            if (cpu85Streak >= 3) {
+            if (cpuPressureStreak >= 3) {
                 cpuPressure = true;
             }
-            if (cpuPressure && below75Streak >= 10) {
+            if (cpuPressure && belowRecoverStreak >= 10) {
                 cpuPressure = false;
             }
             if (cpuPressure) {
                 zeroDuty = true;
                 forbidCpu = true;
-                reasons.add("CPU_GE_85");
+                reasons.add("CPU_GE_94");
             }
             applySteal(sample, reasons);
             if (stealPressure) {
@@ -79,9 +80,10 @@ public final class ProtectionEvaluator {
         boolean memoryValid = sample.availableBytes() != null && sample.memTotalBytes() != null && sample.memAgeMs() <= STALE_FORBID_MS;
         if (memoryValid) {
             long reserve = MemoryBudget.systemReserve(sample.memTotalBytes());
+            long forbidAt = MemoryBudget.systemForbid(sample.memTotalBytes());
             long available = sample.availableBytes();
             lowMemoryStreak = available < reserve ? lowMemoryStreak + 1 : 0;
-            if (available < reserve + Units.GUARD) {
+            if (available < forbidAt) {
                 forbidMemory = true;
                 reasons.add("AVAILABLE_BELOW_RESERVE_GUARD");
             }
@@ -95,16 +97,16 @@ public final class ProtectionEvaluator {
 
         if (sample.heapUsedBytes() != null && sample.heapMaxBytes() != null && sample.heapMaxBytes() > 0) {
             double ratio = sample.heapUsedBytes().doubleValue() / sample.heapMaxBytes().doubleValue();
-            heap85Streak = ratio >= 0.85 ? heap85Streak + 1 : 0;
-            if (ratio >= 0.80) {
+            heap85Streak = ratio >= LoadBounds.HEAP_LATCH_RATIO ? heap85Streak + 1 : 0;
+            if (ratio >= LoadBounds.HEAP_FORBID_RATIO) {
                 forbidMemory = true;
-                reasons.add("HEAP_GE_80");
+                reasons.add("HEAP_GE_93");
             }
             if (heap85Streak >= 2) {
                 stop = true;
                 latch = true;
                 forbidMemory = true;
-                reasons.add("HEAP_GE_85");
+                reasons.add("HEAP_GE_95");
             }
         }
 

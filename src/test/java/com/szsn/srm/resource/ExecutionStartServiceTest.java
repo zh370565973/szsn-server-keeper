@@ -286,7 +286,7 @@ class ExecutionStartServiceTest {
                 "{\"resourceMode\":\"CPU\",\"cpuTargetPct\":30,\"runMode\":\"FINITE\",\"durationSeconds\":9}",
                 "{\"resourceMode\":\"CPU\",\"cpuTargetPct\":30,\"runMode\":\"FINITE\",\"durationSeconds\":604801}",
                 "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"SYSTEM_PERCENT\",\"memoryTargetPct\":0,\"runMode\":\"CONTINUOUS\"}",
-                "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"SYSTEM_PERCENT\",\"memoryTargetPct\":71,\"runMode\":\"CONTINUOUS\"}",
+                "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"SYSTEM_PERCENT\",\"memoryTargetPct\":91,\"runMode\":\"CONTINUOUS\"}",
                 "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"EXTRA_BYTES\",\"memoryTargetBytes\":1048576,\"runMode\":\"CONTINUOUS\"}",
                 "{\"resourceMode\":\"MEMORY\",\"memoryMode\":\"EXTRA_BYTES\",\"memoryTargetBytes\":4194305,\"runMode\":\"CONTINUOUS\"}"
         };

@@ -38,9 +38,9 @@ sudo systemctl start server-resource-manager
 
 ## systemd
 
-`Restart=on-failure`，`RestartSec=5`。120 秒内最多启动 5 次（`StartLimitInterval=120` 与 `StartLimitBurst=5`）。停止窗口 `TimeoutStopSec=10`。JVM 正常处理 SIGTERM 后可能以 143 退出，`SuccessExitStatus=143` 避免一次计划内的停止被当成失败又拉起来。
+`Restart=on-failure`，`RestartSec=5`。120 秒内最多启动 5 次（`StartLimitInterval=120` 与 `StartLimitBurst=5`）。停止窗口 `TimeoutStopSec=30`。监控进程 `OOMScoreAdjust=-500`，负载子进程提高到 500，内核优先结束负载进程。JVM 正常处理 SIGTERM 后可能以 143 退出，`SuccessExitStatus=143` 避免一次计划内的停止被当成失败又拉起来。
 
-`systemctl stop` 是干净停止，不会因为 `on-failure` 自动重启。进程每次启动时控制开关都是 OFF，负载和未完成的执行不会恢复。
+`systemctl stop` 是干净停止，不会因为 `on-failure` 自动重启。负载子进程和监控进程在同一个服务里，停止服务时一起退出。进程每次启动时控制开关都是 OFF，负载和未完成的执行不会恢复。监控进程堆是 512 MiB；大堆只属于正在运行的负载子进程。
 
 ## 冷备
 

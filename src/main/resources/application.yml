@@ -5,7 +5,7 @@
 server:
   # 监听所有网卡，不启用 HTTPS。云安全组需放行下面的端口。
   address: 0.0.0.0
-  port: 33122
+  port: 33121
   servlet:
     session:
       # 浏览器登录会话空闲超时。

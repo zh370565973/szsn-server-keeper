@@ -22,6 +22,8 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -30,13 +32,14 @@ import org.springframework.stereotype.Service;
  * CPU / 内存 / 联合控制编排。成功响应只反映已受理的会话状态，不假定引擎已达目标。
  * EXTRA_BYTES 超预算返回 422，不静默改小目标后启动；COMBINED 任一引擎失败时两侧都停止并写 FAILED。
  * 时长、系统占用目标和内存字节对齐在调用启动落库之前校验，不合法直接 422。
- * 暂停/停止会清除内存负载引用（heldBytes→0），不调用 {@code System.gc()}，不把 RSS 下降当作成功。
- * 生产路径注入真实 {@code byte[]} 分配器；单元测试可换成假分配器。
+ * 暂停、停止、到期和急停会结束负载子进程，物理内存随进程退出交还。
+ * 没有子进程宿主时仍走进程内引擎，供单元测试注入假分配器。
+ * 生产路径不调用 {@code System.gc()}。
  */
 @Service
 public class CpuControlService implements DisposableBean {
-    static final double CPU_TARGET_MIN = 1D;
-    static final double CPU_TARGET_MAX = 60D;
+    static final double CPU_TARGET_MIN = LoadBounds.CPU_TARGET_MIN;
+    static final double CPU_TARGET_MAX = LoadBounds.CPU_TARGET_MAX;
     static final long MONITOR_READY_MS = 10_000L;
     static final long MONITOR_FRESH_MS = 3_000L;
 
@@ -54,6 +57,7 @@ public class CpuControlService implements DisposableBean {
     private final SafetyLoop safetyLoop;
     private final StorageHealth storageHealth;
     private final Clock clock;
+    private final JvmLoadWorkerHost loadHost;
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
         Thread thread = new Thread(runnable, "srm-cpu-lifecycle");
         thread.setDaemon(true);
@@ -65,6 +69,25 @@ public class CpuControlService implements DisposableBean {
                              ResourceLoadManager sessions, ExecutionStartService starts, CpuEngine engine,
                              MemoryEngine memoryEngine, MemoryBudgetGate memoryBudget, SnapshotStore snapshots,
                              SafetyLoop safetyLoop, StorageHealth storageHealth, Clock clock) {
+        this(availability, controlSwitch, sessions, starts, engine, memoryEngine, memoryBudget, snapshots,
+                safetyLoop, storageHealth, clock, (JvmLoadWorkerHost) null);
+    }
+
+    @Autowired
+    public CpuControlService(ControlAvailability availability, ControlSwitch controlSwitch,
+                             ResourceLoadManager sessions, ExecutionStartService starts, CpuEngine engine,
+                             MemoryEngine memoryEngine, MemoryBudgetGate memoryBudget, SnapshotStore snapshots,
+                             SafetyLoop safetyLoop, StorageHealth storageHealth, Clock clock,
+                             ObjectProvider<JvmLoadWorkerHost> loadHosts) {
+        this(availability, controlSwitch, sessions, starts, engine, memoryEngine, memoryBudget, snapshots,
+                safetyLoop, storageHealth, clock, loadHosts == null ? null : loadHosts.getIfAvailable());
+    }
+
+    private CpuControlService(ControlAvailability availability, ControlSwitch controlSwitch,
+                              ResourceLoadManager sessions, ExecutionStartService starts, CpuEngine engine,
+                              MemoryEngine memoryEngine, MemoryBudgetGate memoryBudget, SnapshotStore snapshots,
+                              SafetyLoop safetyLoop, StorageHealth storageHealth, Clock clock,
+                              JvmLoadWorkerHost loadHost) {
         this.availability = availability;
         this.controlSwitch = controlSwitch;
         this.sessions = sessions;
@@ -77,6 +100,7 @@ public class CpuControlService implements DisposableBean {
         this.safetyLoop = safetyLoop;
         this.storageHealth = storageHealth;
         this.clock = clock;
+        this.loadHost = loadHost;
     }
 
     public Map<String, Object> preflight(String configJson) {
@@ -128,8 +152,7 @@ public class CpuControlService implements DisposableBean {
             memoryMode = text(preview, "memoryMode");
             if (MemoryEngine.MODE_EXTRA_BYTES.equals(memoryMode)) {
                 memoryTargetBytes = requireMemoryTargetBytes(preview);
-                // 超预算直接 422，不静默改小目标后启动
-                memoryBudget.requireFixedCapacity(memoryTargetBytes);
+                admitFixed(memoryTargetBytes);
             } else if (MemoryEngine.MODE_SYSTEM_PERCENT.equals(memoryMode)) {
                 memoryTargetPct = requireMemoryTargetPct(preview);
             } else {
@@ -153,19 +176,10 @@ public class CpuControlService implements DisposableBean {
         StartedExecution started = starts.start(idempotencyKey, configJson, committed -> {
             SessionClaim claim = sessions.claim(committed.executionId());
             try {
-                if (combinedMode) {
-                    combined.start(claim, resolvedCpu, workers, resolvedMemoryMode, resolvedMemoryBytes, resolvedMemoryPct);
-                } else if (memoryOnly) {
-                    if (MemoryEngine.MODE_EXTRA_BYTES.equals(resolvedMemoryMode)) {
-                        memoryEngine.startExtraBytes(claim, resolvedMemoryBytes, true, true);
-                    } else {
-                        memoryEngine.startSystemPercent(claim, resolvedMemoryPct, true, true);
-                    }
-                } else {
-                    engine.start(claim, resolvedCpu, workers);
-                }
+                launchEngines(claim, combinedMode, memoryOnly, resolvedCpu, workers, resolvedMemoryMode,
+                        resolvedMemoryBytes, resolvedMemoryPct);
             } catch (RuntimeException exception) {
-                if (!combinedMode) {
+                if (!combinedMode || isolated()) {
                     try {
                         sessions.requestStop(committed.executionId(), StopKind.FAILURE);
                     } catch (RuntimeException ignored) {
@@ -173,7 +187,7 @@ public class CpuControlService implements DisposableBean {
                     }
                     scheduleAwaitStop();
                 }
-                // COMBINED 的回收已在 CombinedLoadStarter 内完成；ExecutionStartService 写 FAILED
+                // 进程内 COMBINED 的回收已在 CombinedLoadStarter 内完成；ExecutionStartService 写 FAILED
                 throw exception;
             }
             if (durationSeconds != null) {
@@ -207,7 +221,7 @@ public class CpuControlService implements DisposableBean {
             memoryMode = text(preview, "memoryMode");
             if (MemoryEngine.MODE_EXTRA_BYTES.equals(memoryMode)) {
                 memoryTargetBytes = requireMemoryTargetBytes(preview);
-                memoryBudget.requireFixedCapacity(memoryTargetBytes);
+                admitFixed(memoryTargetBytes);
             } else if (MemoryEngine.MODE_SYSTEM_PERCENT.equals(memoryMode)) {
                 memoryTargetPct = requireMemoryTargetPct(preview);
             } else {
@@ -230,19 +244,10 @@ public class CpuControlService implements DisposableBean {
         final boolean memoryOnly = "MEMORY".equals(mode);
         SessionClaim claim = sessions.claim(executionId);
         try {
-            if (combinedMode) {
-                combined.start(claim, resolvedCpu, workers, resolvedMemoryMode, resolvedMemoryBytes, resolvedMemoryPct);
-            } else if (memoryOnly) {
-                if (MemoryEngine.MODE_EXTRA_BYTES.equals(resolvedMemoryMode)) {
-                    memoryEngine.startExtraBytes(claim, resolvedMemoryBytes, true, true);
-                } else {
-                    memoryEngine.startSystemPercent(claim, resolvedMemoryPct, true, true);
-                }
-            } else {
-                engine.start(claim, resolvedCpu, workers);
-            }
+            launchEngines(claim, combinedMode, memoryOnly, resolvedCpu, workers, resolvedMemoryMode,
+                    resolvedMemoryBytes, resolvedMemoryPct);
         } catch (RuntimeException exception) {
-            if (!combinedMode) {
+            if (!combinedMode || isolated()) {
                 try {
                     sessions.requestStop(executionId, StopKind.FAILURE);
                 } catch (RuntimeException ignored) {
@@ -259,6 +264,11 @@ public class CpuControlService implements DisposableBean {
 
     public Map<String, Object> pause(String executionId) {
         requireActive(executionId);
+        if (isolated()) {
+            loadHost.pause(executionId);
+            return executionAccepted(executionId, sessions.active().map(session -> session.status().name()).orElse("PAUSED"),
+                    loadHost.snapshot().version(), false);
+        }
         boolean hasCpu = owns(engine.view().executionId(), executionId);
         boolean hasMemory = owns(memoryEngine.view().executionId(), executionId);
         long version;
@@ -287,6 +297,11 @@ public class CpuControlService implements DisposableBean {
                 throw ControlAvailability.unavailable(reasons);
             }
         };
+        if (isolated()) {
+            loadHost.resume(executionId, gate);
+            return executionAccepted(executionId, sessions.active().map(session -> session.status().name()).orElse("RUNNING"),
+                    loadHost.snapshot().version(), false);
+        }
         boolean hasCpu = owns(engine.view().executionId(), executionId);
         boolean hasMemory = owns(memoryEngine.view().executionId(), executionId);
         long version;
@@ -315,7 +330,9 @@ public class CpuControlService implements DisposableBean {
                         .filter(session -> session.executionId().equals(executionId))
                         .map(session -> session.status().name())
                         .orElse("STOPPING"));
-        long version = engine.view().executionId() != null
+        long version = isolated()
+                ? loadHost.snapshot().version()
+                : engine.view().executionId() != null
                 ? engine.view().configVersion()
                 : memoryEngine.view().configVersion();
         return executionAccepted(executionId, status, version, false);
@@ -328,13 +345,40 @@ public class CpuControlService implements DisposableBean {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "expectedVersion 必填");
         }
         long expected = body.get("expectedVersion").asLong();
-        boolean hasCpu = owns(engine.view().executionId(), executionId);
-        boolean hasMemory = owns(memoryEngine.view().executionId(), executionId);
         boolean touchCpu = body.has("cpuTargetPct");
         boolean touchMemory = body.has("memoryTargetBytes") || body.has("memoryTargetPct") || body.has("memoryMode");
         if (!touchCpu && !touchMemory) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "至少提供一个目标字段");
         }
+        if (isolated()) {
+            String mode = loadHost.resourceMode();
+            boolean workerCpu = "CPU".equals(mode) || "COMBINED".equals(mode);
+            boolean workerMemory = "MEMORY".equals(mode) || "COMBINED".equals(mode);
+            if (touchCpu && !workerCpu) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "当前会话没有 CPU 目标可改");
+            }
+            if (touchMemory && !workerMemory) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "当前会话没有内存目标可改");
+            }
+            if (workerCpu && !workerMemory && touchMemory) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "CPU 模式不能修改内存目标");
+            }
+            if (workerMemory && !workerCpu && touchCpu) {
+                throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "MEMORY 模式不能修改 CPU 目标");
+            }
+            Double cpuTarget = touchCpu ? requireCpuTarget(body) : null;
+            Long bytes = body.has("memoryTargetBytes") ? requireMemoryTargetBytes(body) : null;
+            Double pct = body.has("memoryTargetPct") ? requireMemoryTargetPct(body) : null;
+            if (bytes != null) {
+                admitFixed(bytes);
+            }
+            long updated = loadHost.updateTargets(executionId, expected, cpuTarget, bytes, pct);
+            return executionAccepted(executionId,
+                    sessions.active().map(session -> session.status().name()).orElse("RUNNING"),
+                    updated, false);
+        }
+        boolean hasCpu = owns(engine.view().executionId(), executionId);
+        boolean hasMemory = owns(memoryEngine.view().executionId(), executionId);
         if (touchCpu && !hasCpu) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "当前会话没有 CPU 目标可改");
         }
@@ -365,6 +409,9 @@ public class CpuControlService implements DisposableBean {
     }
 
     public Map<String, Object> cpuStatus() {
+        if (isolated() && loadHost.owns(currentExecution())) {
+            return cpuFromWorker(loadHost.snapshot());
+        }
         CpuEngineView view = engine.view();
         Map<String, Object> cpu = new LinkedHashMap<>();
         if (view.executionId() == null) {
@@ -394,7 +441,10 @@ public class CpuControlService implements DisposableBean {
     }
 
     public Map<String, Object> memoryBudgetView() {
-        return memoryBudget.budgetView();
+        if (!isolated()) {
+            return memoryBudget.budgetView();
+        }
+        return memoryBudget.budgetView(LoadHeapPlan.childMaxBytes(memTotal(), true, null), 0L);
     }
 
     /**
@@ -402,11 +452,36 @@ public class CpuControlService implements DisposableBean {
      */
     public Map<String, Object> memoryLoadView() {
         Map<String, Object> view = new LinkedHashMap<>();
-        view.put("heldBytes", memoryEngine.heldBytes());
         MetricSnapshot raw = snapshots.latest();
         MetricSnapshot.JvmView jvm = raw == null ? null : raw.jvm();
-        view.put("heapUsedBytes", jvm == null ? null : jvm.heapUsedBytes());
-        view.put("rssBytes", jvm == null ? null : jvm.rssBytes());
+        Long monitorHeap = jvm == null ? null : jvm.heapUsedBytes();
+        Long monitorRss = jvm == null ? null : jvm.rssBytes();
+        if (isolated() && loadHost.owns(currentExecution())) {
+            LoadWorkerSnapshot worker = loadHost.snapshot();
+            view.put("heldBytes", worker.heldBytes());
+            view.put("heapUsedBytes", monitorHeap);
+            view.put("rssBytes", monitorRss);
+            view.put("monitorHeapUsedBytes", monitorHeap);
+            view.put("monitorRssBytes", monitorRss);
+            view.put("loadHeapUsedBytes", worker.loadHeapUsedBytes());
+            view.put("loadRssBytes", worker.alive() ? worker.loadRssBytes() : 0L);
+            view.put("paused", worker.paused());
+            view.put("memoryMode", worker.memoryMode());
+            view.put("memoryTargetBytes", worker.memoryTargetBytes());
+            view.put("memoryTargetPct", worker.memoryTargetPct());
+            view.put("configVersion", worker.version());
+            view.put("systemUsedPct", worker.systemUsedPct());
+            view.put("targetLimited", worker.targetLimited());
+            view.put("limitedReasons", worker.limitedReasons());
+            return view;
+        }
+        view.put("heldBytes", memoryEngine.heldBytes());
+        view.put("heapUsedBytes", monitorHeap);
+        view.put("rssBytes", monitorRss);
+        view.put("monitorHeapUsedBytes", monitorHeap);
+        view.put("monitorRssBytes", monitorRss);
+        view.put("loadHeapUsedBytes", 0L);
+        view.put("loadRssBytes", 0L);
         MemoryEngineView engineView = memoryEngine.view();
         view.put("paused", engineView.paused());
         view.put("memoryMode", engineView.memoryMode());
@@ -422,13 +497,16 @@ public class CpuControlService implements DisposableBean {
     @Override
     public void destroy() {
         cancelDurationStop();
+        if (loadHost != null) {
+            loadHost.close();
+        }
         scheduler.shutdownNow();
     }
 
     private Map<String, Object> memoryPreflight(JsonNode config, Map<String, Object> body, List<String> reasons) {
         String memoryMode = text(config, "memoryMode");
         body.put("memoryMode", memoryMode);
-        Map<String, Object> budget = memoryBudget.budgetView();
+        Map<String, Object> budget = admissionBudget();
         body.put("budget", budget);
         if (MemoryEngine.MODE_EXTRA_BYTES.equals(memoryMode)) {
             long requested = requireMemoryTargetBytes(config);
@@ -454,7 +532,7 @@ public class CpuControlService implements DisposableBean {
         body.put("cpuTargetPct", target);
         String memoryMode = text(config, "memoryMode");
         body.put("memoryMode", memoryMode);
-        Map<String, Object> budget = memoryBudget.budgetView();
+        Map<String, Object> budget = admissionBudget();
         body.put("budget", budget);
         if (MemoryEngine.MODE_EXTRA_BYTES.equals(memoryMode)) {
             long requested = requireMemoryTargetBytes(config);
@@ -569,6 +647,12 @@ public class CpuControlService implements DisposableBean {
         if (!active.executionId().equals(executionId)) {
             throw new SessionRejectedException(SessionRejectedException.Reason.NOT_ACTIVE, "没有可变更的活动会话");
         }
+        if (isolated()) {
+            if (!loadHost.owns(executionId)) {
+                throw new SessionRejectedException(SessionRejectedException.Reason.NOT_ACTIVE, "引擎没有该会话");
+            }
+            return;
+        }
         boolean cpuOwns = owns(engine.view().executionId(), executionId);
         boolean memoryOwns = owns(memoryEngine.view().executionId(), executionId);
         if (!cpuOwns && !memoryOwns) {
@@ -600,6 +684,10 @@ public class CpuControlService implements DisposableBean {
     private void scheduleAwaitStop() {
         scheduler.execute(() -> {
             try {
+                if (isolated()) {
+                    loadHost.releaseStopped(5_000L);
+                    return;
+                }
                 boolean cpuActive = engine.view().executionId() != null;
                 boolean memoryActive = memoryEngine.view().executionId() != null;
                 if (cpuActive) {
@@ -711,7 +799,9 @@ public class CpuControlService implements DisposableBean {
         if (Double.isNaN(target) || Double.isInfinite(target)
                 || target < LoadBounds.MEMORY_TARGET_PCT_MIN
                 || target > LoadBounds.MEMORY_TARGET_PCT_MAX) {
-            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetPct 必须在 1 到 70 之间");
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID",
+                    "memoryTargetPct 必须在 " + (int) LoadBounds.MEMORY_TARGET_PCT_MIN
+                            + " 到 " + (int) LoadBounds.MEMORY_TARGET_PCT_MAX + " 之间");
         }
         return target;
     }
@@ -722,5 +812,88 @@ public class CpuControlService implements DisposableBean {
         }
         double raw = value.asDouble();
         return !Double.isNaN(raw) && !Double.isInfinite(raw) && raw == Math.rint(raw) && value.canConvertToLong();
+    }
+
+    private boolean isolated() {
+        return loadHost != null;
+    }
+
+    private void launchEngines(SessionClaim claim, boolean combinedMode, boolean memoryOnly, double cpuTarget,
+                               int workers, String memoryMode, Long memoryBytes, Double memoryPct) {
+        if (isolated()) {
+            boolean memory = memoryOnly || combinedMode;
+            long heap = LoadHeapPlan.childMaxBytes(memTotal(), memory, memoryBytes);
+            String mode = memoryOnly ? "MEMORY" : combinedMode ? "COMBINED" : "CPU";
+            loadHost.start(claim, new LoadWorkerRequest(
+                    claim.executionId(), mode, memoryMode, memoryBytes, memoryPct, cpuTarget, workers), heap);
+            return;
+        }
+        if (combinedMode) {
+            combined.start(claim, cpuTarget, workers, memoryMode, memoryBytes, memoryPct);
+        } else if (memoryOnly) {
+            if (MemoryEngine.MODE_EXTRA_BYTES.equals(memoryMode)) {
+                memoryEngine.startExtraBytes(claim, memoryBytes, true, true);
+            } else {
+                memoryEngine.startSystemPercent(claim, memoryPct, true, true);
+            }
+        } else {
+            engine.start(claim, cpuTarget, workers);
+        }
+    }
+
+    private void admitFixed(long bytes) {
+        if (!isolated()) {
+            memoryBudget.requireFixedCapacity(bytes);
+            return;
+        }
+        memoryBudget.requireFixedCapacity(bytes, LoadHeapPlan.childMaxBytes(memTotal(), true, bytes), 0L);
+    }
+
+    private Map<String, Object> admissionBudget() {
+        if (!isolated()) {
+            return memoryBudget.budgetView();
+        }
+        return memoryBudget.budgetView(LoadHeapPlan.childMaxBytes(memTotal(), true, null), 0L);
+    }
+
+    private long memTotal() {
+        MetricSnapshot raw = snapshots.latest();
+        if (raw == null || raw.memory() == null || raw.memory().totalBytes() == null) {
+            return 0L;
+        }
+        return raw.memory().totalBytes();
+    }
+
+    private String currentExecution() {
+        return sessions.active().map(SessionView::executionId).orElse(null);
+    }
+
+    private Map<String, Object> cpuFromWorker(LoadWorkerSnapshot worker) {
+        Map<String, Object> cpu = new LinkedHashMap<>();
+        boolean cpuMode = "CPU".equals(loadHost.resourceMode()) || "COMBINED".equals(loadHost.resourceMode());
+        if (!cpuMode) {
+            cpu.put("targetPct", null);
+            cpu.put("actualPct", null);
+            cpu.put("duty", null);
+            cpu.put("workerCount", null);
+            cpu.put("ewma", null);
+            cpu.put("configVersion", null);
+            cpu.put("externalLoadHigh", false);
+            cpu.put("safetyZeroed", false);
+            cpu.put("stopTimeout", false);
+            cpu.put("limitedReasons", List.of());
+            return cpu;
+        }
+        cpu.put("targetPct", worker.cpuTargetPct());
+        cpu.put("actualPct", worker.actualPct());
+        cpu.put("duty", worker.duty());
+        cpu.put("workerCount", worker.workerCount());
+        cpu.put("ewma", worker.ewma());
+        cpu.put("configVersion", worker.version());
+        cpu.put("externalLoadHigh", worker.externalLoadHigh());
+        cpu.put("safetyZeroed", worker.safetyZeroed());
+        cpu.put("stopTimeout", worker.stopTimeout());
+        cpu.put("limitedReasons", worker.limitedReasons());
+        return cpu;
     }
 }

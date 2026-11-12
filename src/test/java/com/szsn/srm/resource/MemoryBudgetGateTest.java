@@ -39,7 +39,9 @@ class MemoryBudgetGateTest {
     @Test
     void withinBudgetGrowsFakeHeldBytesOnly() {
         FakeMemoryAllocator allocator = new FakeMemoryAllocator();
-        MemoryBudgetGate gate = MemoryBudgetGate.withDefaults(allocator, MemoryBudgetGateTest::ampleSample);
+        // 堆的 90% 小于系统剩余，持有量上升后任务余量跟着下降。
+        MemorySample roomyHeap = new MemorySample(64L * Units.GIB, 60L * Units.GIB, 8L * Units.GIB, 100L * Units.MIB);
+        MemoryBudgetGate gate = MemoryBudgetGate.withDefaults(allocator, () -> roomyHeap);
 
         long beforeAdditional = gate.currentBudget().additionalBytes();
         long target = 16L * Units.MIB;

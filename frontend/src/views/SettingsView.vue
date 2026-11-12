@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { api, type ResourceStatus, type SettingsView } from '../api'
+import { reasonLabel, switchLabel } from '../labels'
 import { monitor } from '../monitor'
 
 const MIB = 1024 * 1024
@@ -139,9 +140,9 @@ async function resetLatch() {
     <a-alert v-if="error" type="error" show-icon :message="error" />
     <div class="split settings-top">
       <a-card title="控制开关" size="small">
-        <p class="hint">当前 {{ status?.controlSwitch ?? settings?.controlSwitch ?? 'OFF' }}。{{ settings?.controlSwitchPolicy }}</p>
+        <p class="hint">当前 {{ switchLabel(status?.controlSwitch ?? settings?.controlSwitch) }}。{{ settings?.controlSwitchPolicy }}</p>
         <p v-if="status?.emergencyLatched" class="hint latch-note">
-          已锁存，原因 {{ status.latchReason || '未记录' }}。关键指标已连续健康 {{ healthySeconds }} 秒，解除需要 30 秒，且没有活动会话。
+          已锁存，原因 {{ reasonLabel(status.latchReason) }}。关键指标已连续健康 {{ healthySeconds }} 秒，解除需要 30 秒，且没有活动会话。
         </p>
         <p v-else class="hint latch-note">当前没有急停锁存。打开开关只允许以后启动，不会补跑计划，也不会启动引擎。</p>
         <a-button :loading="busy" @click="setSwitch((status?.controlSwitch ?? 'OFF') !== 'ON')">

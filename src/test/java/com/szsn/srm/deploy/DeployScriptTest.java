@@ -30,7 +30,8 @@ class DeployScriptTest {
         assertTrue(unit.contains("RestartSec=5"));
         assertTrue(unit.contains("StartLimitInterval=120"));
         assertTrue(unit.contains("StartLimitBurst=5"));
-        assertTrue(unit.contains("TimeoutStopSec=10"));
+        assertTrue(unit.contains("TimeoutStopSec=30"));
+        assertTrue(unit.contains("OOMScoreAdjust=-500"));
         assertTrue(unit.contains("SuccessExitStatus=143"));
         assertTrue(unit.contains("User=srm"));
         for (String name : List.of(
@@ -153,6 +154,7 @@ class DeployScriptTest {
         Run allowed = box.run(box.prefix.resolve("srm-run"));
         assertEquals(0, allowed.code, allowed.output());
         assertTrue(Files.readString(box.javaLog).contains("-jar"));
+        assertTrue(Files.readString(box.javaLog).contains("-Xmx512m"));
 
         Files.writeString(box.prefix.resolve("server-resource-manager.jar"), "NEW");
         Files.writeString(box.javaLog, "");

@@ -364,7 +364,7 @@ exec_service() {
     echo "拒绝启动：当前 JAR 与数据目录 release-pair 不一致。旧 JAR 不能直接打开已升级的数据库，请用 restore.sh 恢复同一备份。" >&2
     exit 1
   fi
-  exec "$SRM_JAVA" -jar "$SRM_PREFIX/$SRM_JAR_NAME" \
+  exec "$SRM_JAVA" -Xms128m -Xmx512m -jar "$SRM_PREFIX/$SRM_JAR_NAME" \
     --spring.config.additional-location="file:${SRM_ETC}/application.yml"
 }
 

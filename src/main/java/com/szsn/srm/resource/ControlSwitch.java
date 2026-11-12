@@ -9,6 +9,8 @@ import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -30,6 +32,7 @@ public class ControlSwitch implements StartGate {
     private final StorageHealth storageHealth;
     private final Clock clock;
     private final ControlAudit audit;
+    private final ObjectProvider<LoadProcessKiller> loadKillers;
     private final Object stateLock = new Object();
     private final Object persistLock = new Object();
 
@@ -42,12 +45,20 @@ public class ControlSwitch implements StartGate {
 
     public ControlSwitch(ResourceLoadManager sessions, LatchStore store, LatchHealthWindow health,
                          StorageHealth storageHealth, Clock clock, ControlAudit audit) {
+        this(sessions, store, health, storageHealth, clock, audit, null);
+    }
+
+    @Autowired
+    public ControlSwitch(ResourceLoadManager sessions, LatchStore store, LatchHealthWindow health,
+                         StorageHealth storageHealth, Clock clock, ControlAudit audit,
+                         ObjectProvider<LoadProcessKiller> loadKillers) {
         this.sessions = sessions;
         this.store = store;
         this.health = health;
         this.storageHealth = storageHealth;
         this.clock = clock;
         this.audit = audit == null ? ControlAudit.NONE : audit;
+        this.loadKillers = loadKillers;
         reload();
     }
 
@@ -92,6 +103,7 @@ public class ControlSwitch implements StartGate {
         if (write && !flush()) {
             log.warn("急停锁存未能写入数据库，本进程保持锁存，下次启动开关仍为关闭");
         }
+        killLoadProcess();
         ControlState state = state();
         audit(operator, auditAction, "SUCCESS", state.latchPersisted() ? null : "LATCH_PERSIST_FAILED");
         return state;
@@ -120,6 +132,7 @@ public class ControlSwitch implements StartGate {
             } catch (RuntimeException exception) {
                 log.warn("关闭开关时停止活动会话未完成记录，停止标志已经设置");
             }
+            killLoadProcess();
         }
         audit(operator, enabled ? "CONTROL_SWITCH_ON" : "CONTROL_SWITCH_OFF", "SUCCESS", null);
         return state();
@@ -268,6 +281,22 @@ public class ControlSwitch implements StartGate {
                 .orElse(null);
         return new ControlState(enabled ? "ON" : "OFF", latched, reason, persisted, view.healthyForMs(), view.reasons(),
                 ready, storageHealth.healthy(), execution);
+    }
+
+    private void killLoadProcess() {
+        ObjectProvider<LoadProcessKiller> provider = loadKillers;
+        if (provider == null) {
+            return;
+        }
+        LoadProcessKiller killer = provider.getIfAvailable();
+        if (killer == null) {
+            return;
+        }
+        try {
+            killer.killLoadProcess();
+        } catch (RuntimeException exception) {
+            log.warn("结束负载进程未完成");
+        }
     }
 
     private void audit(Operator operator, String action, String result, String reason) {

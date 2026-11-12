@@ -81,7 +81,7 @@ paths:
   /resource/status:
     get:
       x-phase: M3
-      summary: 开关、锁存、健康窗口、当前实例、CPU 状态与三重内存预算预览
+      summary: 开关、锁存、健康窗口、当前实例、CPU 状态与三重内存预算预览。memory 同时给出监控堆、监控驻留和负载进程驻留
       responses:
         "200": { description: loadEngine=CPU_MEMORY；budget.maxAllowedBytes 为可输入最大值；成功字段不假定引擎已达目标 }
   /resource/preflight:

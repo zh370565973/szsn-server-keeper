@@ -40,6 +40,46 @@ public final class MemoryBudgetGate {
         return taskCapBytes;
     }
 
+    public MemoryBudget.Result requireFixedCapacity(long requestedBytes, long heapMaxBytes, long heapUsedBytes) {
+        if (requestedBytes < 1) {
+            throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_INVALID", "memoryTargetBytes 不合法");
+        }
+        MemoryBudget.Result budget = budgetFor(heapMaxBytes, heapUsedBytes);
+        long allowedTotal = Math.addExact(allocator.heldBytes(), budget.additionalBytes());
+        if (requestedBytes > allowedTotal) {
+            throw exceeded(requestedBytes, allocator.heldBytes(), budget);
+        }
+        return budget;
+    }
+
+    public Map<String, Object> budgetView(long heapMaxBytes, long heapUsedBytes) {
+        MemoryBudget.Result budget = budgetFor(heapMaxBytes, heapUsedBytes);
+        long held = allocator.heldBytes();
+        long additional = budget.additionalBytes();
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("additionalBytes", additional);
+        view.put("systemReserveBytes", budget.systemReserveBytes());
+        view.put("heapReserveBytes", budget.heapReserveBytes());
+        view.put("loadCapBytes", budget.loadCapBytes());
+        view.put("heldBytes", held);
+        view.put("maxAllowedBytes", held + additional);
+        view.put("taskCapBytes", taskCapBytes);
+        view.put("blockBytes", Units.BLOCK);
+        view.put("limitingFactors", budget.limitingFactors());
+        return view;
+    }
+
+    private MemoryBudget.Result budgetFor(long heapMaxBytes, long heapUsedBytes) {
+        MemorySample sample = requireSample();
+        MemorySample adjusted = new MemorySample(
+                sample.memTotalBytes(),
+                sample.memAvailableBytes(),
+                heapMaxBytes,
+                heapUsedBytes,
+                0L);
+        return MemoryBudget.compute(budgetInput(adjusted));
+    }
+
     /**
      * 用当前样本与持有量计算三重预算。样本关键字段缺失时 additionalBytes=0。
      */

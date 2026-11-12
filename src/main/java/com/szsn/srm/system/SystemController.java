@@ -60,18 +60,18 @@ public class SystemController {
     @GetMapping("/settings")
     public ApiBody<Map<String, Object>> settings() {
         Map<String, Object> thresholds = new LinkedHashMap<>();
-        thresholds.put("cpuTargetDefaultPct", 30);
+        thresholds.put("cpuTargetDefaultPct", 90);
         thresholds.put("cpuTargetMinPct", 1);
-        thresholds.put("cpuTargetMaxPct", 60);
-        thresholds.put("cpuHardMaxPct", 70);
+        thresholds.put("cpuTargetMaxPct", 90);
+        thresholds.put("cpuHardMaxPct", 90);
         thresholds.put("cpuDeadbandPp", 3);
         thresholds.put("memoryBlockBytes", Units.BLOCK);
         thresholds.put("memoryGrowthBytesPerSec", Units.MEMORY_GROWTH_BYTES_PER_SEC);
         thresholds.put("memoryTaskCapBytes", Units.DEFAULT_TASK_CAP);
-        thresholds.put("systemMemoryTargetDefaultPct", 50);
-        thresholds.put("systemReserve", "max(总内存×20%, 1GiB)");
-        thresholds.put("heapLoadHardCap", "Xmx×50%");
-        thresholds.put("jvmReserve", "max(Xmx×25%, 256MiB)");
+        thresholds.put("systemMemoryTargetDefaultPct", 90);
+        thresholds.put("systemReserve", "可用低于总内存约 7% 不再增加；低于约 6% 连续 2 秒停止并锁存。至少留 1GiB");
+        thresholds.put("heapLoadHardCap", "Xmx×90%");
+        thresholds.put("jvmReserve", "max(Xmx×8%, 256MiB)");
         thresholds.put("guardBytes", Units.GUARD);
         thresholds.put("historyBucketSeconds", 10);
         thresholds.put("historyRetentionDays", RetentionPolicy.METRIC_RETENTION_MS / 86_400_000L);

@@ -366,3 +366,22 @@ systemd 使用 `Restart=on-failure`、`RestartSec=5`，120 秒内最多启动 5 
 2026-11-12，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
 
 - `mvn -B "-Dskip.frontend=true" -Dtest=HttpListenTest test`：BUILD SUCCESS。1 个测试，0 失败。进程绑定 `0.0.0.0`，不启用 SSL，`/api/v1/auth/csrf` 返回 200。没有启动 CPU 或内存负载。
+
+## 90% 占用与百分比内存
+
+CPU 和内存目标都是 1%–90%，默认 90%。内存页面只填百分比；旧的固定字节任务仍可运行。可用内存降到总内存约 7% 不再增加，低于约 6% 连续 2 秒则停止并锁存。CPU 连续 3 秒达到 94% 停止加力，达到 97% 停止并锁存。堆负载上限是 `Xmx` 的 90%，93% 不再增加，95% 连续 2 秒停止并锁存。控制开关页面显示开/关。`README.md` 写了这台约 125 GiB 机器的启动参数 `-Xms128m -Xmx115g`；安装脚本没有把 115g 写成所有机器的默认值。
+
+2026-11-12，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn -B "-Dskip.frontend=true" clean test`：BUILD SUCCESS。193 个测试，0 失败，0 错误，0 跳过。没有启动 CPU 或内存负载。
+- `npx vue-tsc --noEmit`（`frontend/`）：退出码 0。
+- 本机 `http://127.0.0.1:33122/resource` 打开后：CPU 与内存输入都是 1–90%，默认 90，没有 MiB 输入；控制开关显示「关」；急停原因显示「紧急停止」。启动按钮处于禁用，没有发起负载。Windows 上控制写接口仍不可用。麒麟现场仍是目标环境待验收。
+
+## 停止任务后交还物理内存
+
+2026-11-12。负载改到同一个 JAR 的子进程。停止、暂停、到期和急停都结束该进程，进程退出后驻留内存为 0。监控进程保持 `-Xms128m -Xmx512m`。大堆只写在子进程上。开发机只用 4MiB 做退出验收，不做真实大内存或 CPU 压力。麒麟上几十 GiB 的回落仍是目标环境待验收。
+
+2026-11-12，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn -B "-Dskip.frontend=true" test`：BUILD SUCCESS。194 个测试，0 失败，0 错误，0 跳过。其中 `LoadWorkerProcessTest` 启动 4MiB 负载子进程，停止后进程退出，驻留内存为 0，终态为 STOPPED。没有做大内存或 CPU 压力。
+- `npx vue-tsc --noEmit`（`frontend/`）：退出码 0。页面文案已改，没有在浏览器里再点一次负载。Windows 上控制写接口仍不可用，没有启动真实大内存任务。

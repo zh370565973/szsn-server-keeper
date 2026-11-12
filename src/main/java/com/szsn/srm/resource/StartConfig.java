@@ -24,7 +24,6 @@ import org.springframework.http.HttpStatus;
 final class StartConfig {
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
-    private static final BigDecimal HUNDRED = new BigDecimal("100");
     private static final BigDecimal MEMORY_PCT_MIN = BigDecimal.valueOf(LoadBounds.MEMORY_TARGET_PCT_MIN);
     private static final BigDecimal MEMORY_PCT_MAX = BigDecimal.valueOf(LoadBounds.MEMORY_TARGET_PCT_MAX);
     private static final Set<String> FIELDS = Set.of(
@@ -207,7 +206,7 @@ final class StartConfig {
             value = value.setScale(0);
         }
         if (value.compareTo(MEMORY_PCT_MIN) < 0 || value.compareTo(MEMORY_PCT_MAX) > 0) {
-            throw invalid(field + " 必须在 1 到 70 之间");
+            throw invalid(field + " 必须在 1 到 " + (int) LoadBounds.MEMORY_TARGET_PCT_MAX + " 之间");
         }
         return value;
     }
@@ -221,8 +220,9 @@ final class StartConfig {
         if (value.scale() < 0) {
             value = value.setScale(0);
         }
-        if (value.compareTo(BigDecimal.ZERO) < 0 || value.compareTo(HUNDRED) > 0) {
-            throw invalid(field + " 必须在 0 到 100 之间");
+        if (value.compareTo(BigDecimal.valueOf(LoadBounds.CPU_TARGET_MIN)) < 0
+                || value.compareTo(BigDecimal.valueOf(LoadBounds.CPU_TARGET_MAX)) > 0) {
+            throw invalid("cpuTargetPct 必须在 1 到 " + (int) LoadBounds.CPU_TARGET_MAX + " 之间");
         }
         return value;
     }

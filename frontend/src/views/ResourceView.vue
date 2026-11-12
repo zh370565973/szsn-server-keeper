@@ -4,35 +4,31 @@ import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import { ApiError, api, type ResourceStatus } from '../api'
 import { formatBytes, formatPercent } from '../format'
+import { reasonLabel, statusLabel, switchLabel } from '../labels'
 import { monitor, refreshResource } from '../monitor'
 
 const COMBINED_TIP = '两边一起压。有一边没起来，两边一起停。'
-const CPU_TARGET_TIP = '整台机器的 CPU 大概忙到这个数。别的程序已经占得更高时，压不下去。'
-const EXTRA_BYTES_TIP = '本程序再多抓这么多内存，要填 4 的倍数。机器现在给不出这么多，启动会被拒绝，你填的数保持不变。'
-const SYSTEM_PERCENT_TIP = '整台机器的内存大概用到这个数。本来就已经更高时，不再往上加。'
+const CPU_TARGET_TIP = '整台机器的 CPU 大概忙到这个数。别的程序已经更高时，压不下去。目标最高 90%。'
+const SYSTEM_PERCENT_TIP = '整台机器的内存大概用到这个数，和 CPU 一样填百分比。本来就已经更高时，不再往上加。快到保护线时会自己停。'
 const FINITE_TIP = '到点自己停。中间暂停的时间也算在里面。'
 const CONTINUOUS_TIP = '不会自己停。要自己点停止，或者走急停。'
 const DURATION_TIP = '最短 10 秒，最长 7 天。'
 
-const MIB = 1024 * 1024
-const BLOCK_MIB = 4
 const DURATION_MIN_SECONDS = 10
 const DURATION_MAX_SECONDS = 7 * 24 * 60 * 60
 
 const status = ref<ResourceStatus>()
 const error = ref('')
 const busy = ref(false)
-const targetPct = ref(30)
-const memoryMode = ref<'EXTRA_BYTES' | 'SYSTEM_PERCENT'>('EXTRA_BYTES')
-const memoryTargetMib = ref(256)
-const memoryTargetPct = ref(50)
+const targetPct = ref(90)
+const memoryTargetPct = ref(90)
 const durationSeconds = ref(300)
 const runMode = ref<'FINITE' | 'CONTINUOUS'>('FINITE')
 const resourceMode = ref<'CPU' | 'MEMORY' | 'COMBINED'>('CPU')
 let timer: number | undefined
 
 const reasons = computed(() => status.value?.controlDisabledReasons ?? [])
-const reasonText = computed(() => reasons.value.join('；') || '负载控制不可用')
+const reasonText = computed(() => reasons.value.map((item) => reasonLabel(item)).join('；') || '负载控制不可用')
 const cpu = computed(() => status.value?.cpu)
 const memory = computed(() => status.value?.memory)
 const budget = computed(() => status.value?.budget)
@@ -54,17 +50,6 @@ const maxAllowedBytes = computed(() => {
   const additional = budget.value?.additionalBytes ?? 0
   return held + additional
 })
-const maxAllowedMib = computed(() => Math.floor(maxAllowedBytes.value / MIB))
-const requestedMemoryBytes = computed(() => Math.round(memoryTargetMib.value) * MIB)
-const overBudget = computed(
-  () =>
-    budget.value?.maxAllowedBytes != null &&
-    memoryMode.value === 'EXTRA_BYTES' &&
-    requestedMemoryBytes.value > maxAllowedBytes.value
-)
-const alignmentOk = computed(
-  () => memoryMode.value !== 'EXTRA_BYTES' || Math.round(memoryTargetMib.value) % BLOCK_MIB === 0
-)
 const durationOk = computed(() => {
   if (runMode.value !== 'FINITE') {
     return true
@@ -74,12 +59,12 @@ const durationOk = computed(() => {
     && durationSeconds.value <= DURATION_MAX_SECONDS
 })
 const memoryPctOk = computed(() => {
-  if (!usesMemory.value || memoryMode.value !== 'SYSTEM_PERCENT') {
+  if (!usesMemory.value) {
     return true
   }
-  return Number.isFinite(memoryTargetPct.value) && memoryTargetPct.value >= 1 && memoryTargetPct.value <= 70
+  return Number.isFinite(memoryTargetPct.value) && memoryTargetPct.value >= 1 && memoryTargetPct.value <= 90
 })
-const memoryReady = computed(() => alignmentOk.value && !overBudget.value && memoryPctOk.value)
+const memoryReady = computed(() => memoryPctOk.value)
 
 const canStart = computed(() =>
   capable.value &&
@@ -106,7 +91,7 @@ const limitedText = computed(() => {
   const cpuReasons = cpu.value?.limitedReasons ?? []
   const memReasons = memory.value?.limitedReasons ?? active.value?.limitedReasons ?? []
   const items = [...cpuReasons, ...memReasons]
-  return items.length ? Array.from(new Set(items)).join('；') : '无'
+  return items.length ? Array.from(new Set(items.map((item) => reasonLabel(item)))).join('；') : '无'
 })
 
 const configVersion = computed(() => {
@@ -120,24 +105,16 @@ const startTip = computed(() => {
   if (canStart.value) {
     return '开始压。开之前还会再查一遍。'
   }
-  if (usesMemory.value && overBudget.value) {
-    return `机器现在最多还能再占 ${maxAllowedMib.value} MiB。`
-  }
   if (!durationOk.value) {
     return DURATION_TIP
   }
-  if (usesMemory.value && !alignmentOk.value) {
-    return '要多占的内存得是 4 的倍数。'
-  }
   if (usesMemory.value && !memoryPctOk.value) {
-    return '整机内存占用要在 1% 到 70% 之间。'
+    return '整机内存占用要在 1% 到 90% 之间。'
   }
   return reasonText.value
 })
 
-const applyBlocked = computed(
-  () => usesMemory.value && (overBudget.value || !alignmentOk.value || !memoryPctOk.value)
-)
+const applyBlocked = computed(() => usesMemory.value && !memoryPctOk.value)
 
 onMounted(async () => {
   await reload()
@@ -177,12 +154,6 @@ function syncFromStatus(value: ResourceStatus) {
   if (value.cpu?.targetPct != null) {
     targetPct.value = value.cpu.targetPct
   }
-  if (value.memory?.memoryMode === 'EXTRA_BYTES' || value.memory?.memoryMode === 'SYSTEM_PERCENT') {
-    memoryMode.value = value.memory.memoryMode
-  }
-  if (value.memory?.memoryTargetBytes != null) {
-    memoryTargetMib.value = Math.round(value.memory.memoryTargetBytes / MIB)
-  }
   if (value.memory?.memoryTargetPct != null) {
     memoryTargetPct.value = value.memory.memoryTargetPct
   }
@@ -200,7 +171,12 @@ async function reload() {
 }
 
 function newKey() {
-  return crypto.randomUUID()
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
 function buildBody(): Record<string, unknown> {
@@ -215,12 +191,8 @@ function buildBody(): Record<string, unknown> {
     body.cpuTargetPct = targetPct.value
   }
   if (usesMemory.value) {
-    body.memoryMode = memoryMode.value
-    if (memoryMode.value === 'EXTRA_BYTES') {
-      body.memoryTargetBytes = requestedMemoryBytes.value
-    } else {
-      body.memoryTargetPct = memoryTargetPct.value
-    }
+    body.memoryMode = 'SYSTEM_PERCENT'
+    body.memoryTargetPct = memoryTargetPct.value
   }
   return body
 }
@@ -231,15 +203,7 @@ async function start() {
     return
   }
   if (usesMemory.value && !memoryPctOk.value) {
-    error.value = '系统占用目标必须在 1% 到 70% 之间'
-    return
-  }
-  if (usesMemory.value && overBudget.value) {
-    error.value = `固定容量超过当前预算。可输入最大值为 ${maxAllowedMib.value} MiB，请改小后再提交；不会静默改小后启动。`
-    return
-  }
-  if (usesMemory.value && !alignmentOk.value) {
-    error.value = `固定容量必须是 ${BLOCK_MIB} MiB 的整数倍`
+    error.value = '系统占用目标必须在 1% 到 90% 之间'
     return
   }
   busy.value = true
@@ -253,7 +217,7 @@ async function start() {
         body: JSON.stringify(buildBody())
       }
     )
-    message.success(`已受理启动，状态 ${accepted.status}。实际调节以状态为准，不假定已达目标。`)
+    message.success(`已受理启动，状态 ${statusLabel(accepted.status)}。实际调节以状态为准，不假定已达目标。`)
     await reload()
     await refreshResource()
   } catch (caught) {
@@ -270,7 +234,7 @@ async function pause() {
   busy.value = true
   try {
     const accepted = await api<{ status: string }>(`/executions/${active.value.executionId}/pause`, { method: 'POST' })
-    message.success(`已受理暂停，当前 ${accepted.status}`)
+    message.success(`已受理暂停，当前 ${statusLabel(accepted.status)}`)
     await reload()
   } catch (caught) {
     error.value = describe(caught)
@@ -286,7 +250,7 @@ async function resume() {
   busy.value = true
   try {
     const accepted = await api<{ status: string }>(`/executions/${active.value.executionId}/resume`, { method: 'POST' })
-    message.success(`已受理恢复，当前 ${accepted.status}`)
+    message.success(`已受理恢复，当前 ${statusLabel(accepted.status)}`)
     await reload()
   } catch (caught) {
     error.value = describe(caught)
@@ -302,7 +266,7 @@ async function stop() {
   busy.value = true
   try {
     const accepted = await api<{ status: string }>(`/executions/${active.value.executionId}/stop`, { method: 'POST' })
-    message.success(`已受理停止，当前 ${accepted.status}`)
+    message.success(`已受理停止，当前 ${statusLabel(accepted.status)}`)
     await reload()
   } catch (caught) {
     error.value = describe(caught)
@@ -316,15 +280,7 @@ async function applyTarget() {
     return
   }
   if (usesMemory.value && !memoryPctOk.value) {
-    error.value = '系统占用目标必须在 1% 到 70% 之间'
-    return
-  }
-  if (usesMemory.value && overBudget.value) {
-    error.value = `固定容量超过当前预算。可输入最大值为 ${maxAllowedMib.value} MiB，禁止提交；不会静默改小。`
-    return
-  }
-  if (usesMemory.value && !alignmentOk.value) {
-    error.value = `固定容量必须是 ${BLOCK_MIB} MiB 的整数倍`
+    error.value = '系统占用目标必须在 1% 到 90% 之间'
     return
   }
   busy.value = true
@@ -336,11 +292,7 @@ async function applyTarget() {
       body.cpuTargetPct = targetPct.value
     }
     if (usesMemory.value) {
-      if (memoryMode.value === 'EXTRA_BYTES') {
-        body.memoryTargetBytes = requestedMemoryBytes.value
-      } else {
-        body.memoryTargetPct = memoryTargetPct.value
-      }
+      body.memoryTargetPct = memoryTargetPct.value
     }
     const accepted = await api<{ status: string; version: number }>(`/executions/${active.value.executionId}/targets`, {
       method: 'PATCH',
@@ -372,12 +324,7 @@ async function preflight() {
       const workers = result.workerCount != null ? `，预计 Worker ${result.workerCount} 个` : ''
       message.success(`预检通过${workers}。预检不预留资源。`)
     } else {
-      const maxBytes = result.maxAllowedBytes ?? result.budget?.maxAllowedBytes
-      const maxHint =
-        maxBytes != null && usesMemory.value && overBudget.value
-          ? `可输入最大值 ${Math.floor(maxBytes / MIB)} MiB。`
-          : ''
-      message.warning(`${(result.reasons ?? []).join('；') || '预检未通过'}。${maxHint}`.trim())
+      message.warning(`${(result.reasons ?? []).map((item) => reasonLabel(item)).join('；') || '预检未通过'}`)
     }
   } catch (caught) {
     error.value = describe(caught)
@@ -389,17 +336,15 @@ async function preflight() {
 function describe(caught: unknown) {
   if (caught instanceof ApiError) {
     if (caught.code === 'MEMORY_BUDGET_EXCEEDED') {
-      const maxBytes = Number(caught.details?.maxAllowedBytes)
-      const maxMib = Number.isFinite(maxBytes) ? Math.floor(maxBytes / MIB) : maxAllowedMib.value
-      return `固定内存目标超过当前预算。可输入最大值为 ${maxMib} MiB，请改小后再提交；不会静默改小后启动。`
+      return '固定内存目标超过当前预算。请改小百分比后再提交；不会静默改小后启动。'
     }
     const detailReasons = caught.details?.reasons
     if (detailReasons?.length) {
-      return `${caught.message}：${detailReasons.join('；')}`
+      return `${caught.message}：${detailReasons.map((item) => reasonLabel(item)).join('；')}`
     }
     return caught.message
   }
-  return caught instanceof Error ? caught.message : '操作失败'
+  return '操作失败'
 }
 </script>
 
@@ -437,46 +382,20 @@ function describe(caught: unknown) {
               </a-tooltip>
             </a-radio-group>
           </a-form-item>
-          <a-form-item label="希望 CPU 忙到（1–60%）" :tooltip="CPU_TARGET_TIP">
+          <a-form-item label="希望 CPU 忙到（1–90%）" :tooltip="CPU_TARGET_TIP">
             <a-input-number
               v-model:value="targetPct"
               :min="1"
-              :max="60"
+              :max="90"
               :disabled="busy || !usesCpu"
               style="width: 100%"
             />
           </a-form-item>
-          <a-form-item
-            label="内存怎么压"
-            :tooltip="memoryMode === 'EXTRA_BYTES' ? EXTRA_BYTES_TIP : SYSTEM_PERCENT_TIP"
-          >
-            <a-radio-group v-model:value="memoryMode">
-              <a-tooltip :title="EXTRA_BYTES_TIP">
-                <span class="tip-wrap">
-                  <a-radio value="EXTRA_BYTES" :disabled="busy || hasSession || !usesMemory">多占固定大小</a-radio>
-                </span>
-              </a-tooltip>
-              <a-tooltip :title="SYSTEM_PERCENT_TIP">
-                <span class="tip-wrap">
-                  <a-radio value="SYSTEM_PERCENT" :disabled="busy || hasSession || !usesMemory">按整机百分比</a-radio>
-                </span>
-              </a-tooltip>
-            </a-radio-group>
-          </a-form-item>
-          <a-form-item v-if="memoryMode === 'EXTRA_BYTES'" label="要多占的内存（MiB）" :tooltip="EXTRA_BYTES_TIP">
-            <a-input-number
-              v-model:value="memoryTargetMib"
-              :min="4"
-              :step="4"
-              :disabled="busy || !usesMemory"
-              style="width: 100%"
-            />
-          </a-form-item>
-          <a-form-item v-else label="希望整机内存占用到（1–70%）" :tooltip="SYSTEM_PERCENT_TIP">
+          <a-form-item label="希望整机内存占用到（1–90%）" :tooltip="SYSTEM_PERCENT_TIP">
             <a-input-number
               v-model:value="memoryTargetPct"
               :min="1"
-              :max="70"
+              :max="90"
               :disabled="busy || !usesMemory"
               style="width: 100%"
             />
@@ -504,14 +423,6 @@ function describe(caught: unknown) {
               style="width: 100%"
             />
           </a-form-item>
-          <a-alert
-            v-if="usesMemory && memoryMode === 'EXTRA_BYTES' && overBudget"
-            class="span-2"
-            type="error"
-            show-icon
-            message="超过当前预算"
-            :description="`可输入最大值为 ${maxAllowedMib} MiB。请改小后再提交；不会静默改小目标后启动。`"
-          />
           <a-form-item v-if="canEditTarget" class="span-2">
             <a-button :loading="busy" :disabled="applyBlocked" @click="applyTarget">应用目标</a-button>
           </a-form-item>
@@ -550,15 +461,15 @@ function describe(caught: unknown) {
         <a-descriptions bordered size="small" :column="2">
           <a-descriptions-item>
             <template #label><span class="hint-label">控制开关<a-tooltip title="总开关。关上以后不能新开。"><QuestionCircleOutlined class="hint-icon" /></a-tooltip></span></template>
-            {{ status?.controlSwitch ?? 'OFF' }}
+            {{ switchLabel(status?.controlSwitch) }}
           </a-descriptions-item>
           <a-descriptions-item>
             <template #label><span class="hint-label">急停锁存<a-tooltip title="出过严重问题被锁住了。解开之前不能再开。"><QuestionCircleOutlined class="hint-icon" /></a-tooltip></span></template>
-            {{ status?.emergencyLatched ? `已锁存${status.latchReason ? `（${status.latchReason}）` : ''}` : '未锁存' }}
+            {{ status?.emergencyLatched ? `已锁存${status.latchReason ? `（${reasonLabel(status.latchReason)}）` : ''}` : '未锁存' }}
           </a-descriptions-item>
           <a-descriptions-item :span="2">
             <template #label><span class="hint-label">当前会话<a-tooltip title="现在这一次。同时只能有一次。"><QuestionCircleOutlined class="hint-icon" /></a-tooltip></span></template>
-            {{ active ? `${active.status} / ${active.executionId}` : '无活动会话' }}
+            {{ active ? `${statusLabel(active.status)} / ${active.executionId}` : '无活动会话' }}
           </a-descriptions-item>
           <a-descriptions-item>
             <template #label><span class="hint-label">请求目标 CPU<a-tooltip title="你填的 CPU 目标。"><QuestionCircleOutlined class="hint-icon" /></a-tooltip></span></template>
@@ -607,16 +518,20 @@ function describe(caught: unknown) {
             {{ formatBytes(memory?.heldBytes ?? active?.heldBytes ?? 0) }}
           </a-descriptions-item>
           <a-descriptions-item>
-            <template #label><span class="hint-label">JVM 堆使用<a-tooltip title="Java 自己正在用的内存。"><QuestionCircleOutlined class="hint-icon" /></a-tooltip></span></template>
-            {{ formatBytes(memory?.heapUsedBytes ?? snapshot?.jvm.heapUsedBytes) }}
+            <template #label><span class="hint-label">JVM 堆使用<a-tooltip title="监控进程自己的堆，不含负载进程。"><QuestionCircleOutlined class="hint-icon" /></a-tooltip></span></template>
+            {{ formatBytes(memory?.monitorHeapUsedBytes ?? memory?.heapUsedBytes ?? snapshot?.jvm.heapUsedBytes) }}
           </a-descriptions-item>
-          <a-descriptions-item :span="2">
-            <template #label><span class="hint-label">进程驻留内存<a-tooltip title="操作系统看到这个程序占着的内存。负载放开后，这个数往往还要过一会儿才降。"><QuestionCircleOutlined class="hint-icon" /></a-tooltip></span></template>
-            {{ formatBytes(memory?.rssBytes ?? snapshot?.jvm.rssBytes) }}
+          <a-descriptions-item>
+            <template #label><span class="hint-label">监控进程驻留<a-tooltip title="操作系统看到监控进程占着的内存。负载不在这个进程里。"><QuestionCircleOutlined class="hint-icon" /></a-tooltip></span></template>
+            {{ formatBytes(memory?.monitorRssBytes ?? memory?.rssBytes ?? snapshot?.jvm.rssBytes) }}
+          </a-descriptions-item>
+          <a-descriptions-item>
+            <template #label><span class="hint-label">负载进程驻留<a-tooltip title="负载进程占着的物理内存。停止、暂停或急停后进程退出，这里回到 0，内存交还给系统。"><QuestionCircleOutlined class="hint-icon" /></a-tooltip></span></template>
+            {{ formatBytes(memory?.loadRssBytes ?? 0) }}
           </a-descriptions-item>
         </a-descriptions>
         <p class="hint status-note">
-          停止后：负载引用已释放，系统内存回收由 JVM/OS 决定。负载持有、JVM 堆使用与进程驻留内存口径不同，请分开解读。
+          停止或暂停后负载进程退出，系统可用内存收回这次占用。监控进程仍保留页面和采集所需的内存。
         </p>
       </a-card>
     </div>

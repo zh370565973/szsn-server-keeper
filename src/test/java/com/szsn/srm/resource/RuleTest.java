@@ -106,18 +106,18 @@ class RuleTest {
     @Test
     void protectionWindowsLatchAndRelease() {
         ProtectionEvaluator evaluator = new ProtectionEvaluator();
-        assertFalse(evaluator.onSample(sample(90, 0)).zeroDuty());
-        assertFalse(evaluator.onSample(sample(90, 0)).zeroDuty());
-        assertTrue(evaluator.onSample(sample(90, 0)).zeroDuty());
+        assertFalse(evaluator.onSample(sample(94, 0)).zeroDuty());
+        assertFalse(evaluator.onSample(sample(94, 0)).zeroDuty());
+        assertTrue(evaluator.onSample(sample(94, 0)).zeroDuty());
         for (int i = 0; i < 9; i++) {
             assertTrue(evaluator.onSample(sample(70, 0)).zeroDuty());
         }
         assertFalse(evaluator.onSample(sample(70, 0)).zeroDuty());
 
         ProtectionEvaluator severe = new ProtectionEvaluator();
-        severe.onSample(sample(96, 0));
-        severe.onSample(sample(96, 0));
-        var latched = severe.onSample(sample(96, 0));
+        severe.onSample(sample(97, 0));
+        severe.onSample(sample(97, 0));
+        var latched = severe.onSample(sample(97, 0));
         assertTrue(latched.safetyStop());
         assertTrue(latched.latch());
     }

@@ -4,6 +4,7 @@ import com.szsn.srm.common.Units;
 import com.szsn.srm.monitor.MetricSnapshot;
 import com.szsn.srm.monitor.SnapshotStore;
 import com.szsn.srm.safety.SafetyLoop;
+import com.szsn.srm.safety.SafetySignal;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -78,5 +79,24 @@ public class ResourceEngineConfig {
             ChunkedMemoryGrower grower,
             SafetyLoop safetyLoop) {
         return new MemoryEngine(sessions, allocator, gate, memorySampleSource, grower, safetyLoop::current);
+    }
+
+    @Bean
+    JvmLoadWorkerHost loadWorkerHost(ResourceLoadManager sessions, SnapshotStore store, SafetyLoop safetyLoop) {
+        return new JvmLoadWorkerHost(sessions, () -> {
+            MetricSnapshot snapshot = store.latest();
+            SafetySignal signal = safetyLoop.current();
+            Long total = snapshot == null || snapshot.memory() == null ? null : snapshot.memory().totalBytes();
+            Long available = snapshot == null || snapshot.memory() == null ? null : snapshot.memory().availableBytes();
+            Double cpu = snapshot == null || snapshot.cpu() == null ? null : snapshot.cpu().overallBusyPct();
+            return new LoadWorkerSample(
+                    cpu,
+                    total,
+                    available,
+                    signal != null && signal.forbidCpuGrowth(),
+                    signal != null && signal.zeroDuty(),
+                    signal != null && signal.forbidMemoryGrowth(),
+                    signal != null && (signal.safetyStop() || signal.latch()));
+        });
     }
 }

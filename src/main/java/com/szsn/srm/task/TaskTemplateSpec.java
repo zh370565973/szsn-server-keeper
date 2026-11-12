@@ -15,14 +15,14 @@ import java.util.Set;
 import org.springframework.http.HttpStatus;
 
 /**
- * 把模板请求收成可落库的字段。CPU 目标使用公开启动的 1–60 边界。
+ * 把模板请求收成可落库的字段。CPU 和内存目标都是 1–90。
  * 不读取本机容量，也不创建执行实例。
  */
 final class TaskTemplateSpec {
     private static final ObjectMapper JSON = new ObjectMapper()
             .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
     private static final BigDecimal CPU_MIN = new BigDecimal("1");
-    private static final BigDecimal CPU_MAX = new BigDecimal("60");
+    private static final BigDecimal CPU_MAX = BigDecimal.valueOf(LoadBounds.CPU_TARGET_MAX);
     private static final BigDecimal MEMORY_PCT_MIN = BigDecimal.valueOf(LoadBounds.MEMORY_TARGET_PCT_MIN);
     private static final BigDecimal MEMORY_PCT_MAX = BigDecimal.valueOf(LoadBounds.MEMORY_TARGET_PCT_MAX);
     private static final Set<String> FIELDS = Set.of(
@@ -196,11 +196,11 @@ final class TaskTemplateSpec {
     private static Double cpuPercent(JsonNode raw, String field) {
         BigDecimal value = decimal(raw, field);
         if (value.compareTo(CPU_MIN) < 0 || value.compareTo(CPU_MAX) > 0) {
-            throw invalid("cpuTargetPct 必须在 1 到 60 之间");
+            throw invalid("cpuTargetPct 必须在 1 到 " + CPU_MAX.intValue() + " 之间");
         }
         double parsed = value.doubleValue();
-        if (Double.isNaN(parsed) || Double.isInfinite(parsed) || parsed < 1D || parsed > 60D) {
-            throw invalid("cpuTargetPct 必须在 1 到 60 之间");
+        if (Double.isNaN(parsed) || Double.isInfinite(parsed) || parsed < 1D || parsed > LoadBounds.CPU_TARGET_MAX) {
+            throw invalid("cpuTargetPct 必须在 1 到 " + CPU_MAX.intValue() + " 之间");
         }
         return parsed;
     }
@@ -208,13 +208,13 @@ final class TaskTemplateSpec {
     private static Double memoryPercent(JsonNode raw, String field) {
         BigDecimal value = decimal(raw, field);
         if (value.compareTo(MEMORY_PCT_MIN) < 0 || value.compareTo(MEMORY_PCT_MAX) > 0) {
-            throw invalid(field + " 必须在 1 到 70 之间");
+            throw invalid(field + " 必须在 1 到 " + (int) LoadBounds.MEMORY_TARGET_PCT_MAX + " 之间");
         }
         double parsed = value.doubleValue();
         if (Double.isNaN(parsed) || Double.isInfinite(parsed)
                 || parsed < LoadBounds.MEMORY_TARGET_PCT_MIN
                 || parsed > LoadBounds.MEMORY_TARGET_PCT_MAX) {
-            throw invalid(field + " 必须在 1 到 70 之间");
+            throw invalid(field + " 必须在 1 到 " + (int) LoadBounds.MEMORY_TARGET_PCT_MAX + " 之间");
         }
         return parsed;
     }

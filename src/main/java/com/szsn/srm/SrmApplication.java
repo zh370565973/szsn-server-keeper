@@ -2,6 +2,7 @@ package com.szsn.srm;
 
 import com.szsn.srm.common.SrmProperties;
 import com.szsn.srm.monitor.SseHub;
+import com.szsn.srm.resource.LoadWorkerMain;
 import java.time.Clock;
 import java.util.Arrays;
 import org.springframework.boot.SpringApplication;
@@ -21,6 +22,12 @@ import org.springframework.core.io.Resource;
 @EnableConfigurationProperties(SrmProperties.class)
 public class SrmApplication {
     public static void main(String[] args) {
+        for (String arg : args) {
+            if ("--load-worker".equals(arg)) {
+                LoadWorkerMain.main(new String[0]);
+                return;
+            }
+        }
         boolean init = Arrays.asList(args).contains("init-admin");
         SpringApplicationBuilder builder = new SpringApplicationBuilder(SrmApplication.class);
         if (init) {
