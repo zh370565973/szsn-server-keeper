@@ -358,3 +358,11 @@ systemd 使用 `Restart=on-failure`、`RestartSec=5`，120 秒内最多启动 5 
 ## 下一阶段
 
 开发清单已没有「未开始」条目。仍待目标环境验证的是 M1-09 / AT-02、M2-09 / AT-03、M5-04 / AT-17 与 AT-18，以及第 12.2 节性能测量。有获准的麒麟机器后再取证，取证前保持待验收。
+
+## 公网普通 HTTP
+
+2026-11-12。用户要求云服务器不配证书，用公网 IP 的普通 HTTP 打开控制页。去掉非回环监听时强制 HTTPS 和 `srm.remote.cidr` 的启动拒绝。源码默认监听 `0.0.0.0:33122`。安装示例监听 `0.0.0.0:8080`。`srm.remote.cidr` 仍不拦截已接入的请求。
+
+2026-11-12，工作目录 `D:\SZSN\szsn-server-keeper`。测试运行时是 JDK 17.0.19。
+
+- `mvn -B "-Dskip.frontend=true" -Dtest=HttpListenTest test`：BUILD SUCCESS。1 个测试，0 失败。进程绑定 `0.0.0.0`，不启用 SSL，`/api/v1/auth/csrf` 返回 200。没有启动 CPU 或内存负载。

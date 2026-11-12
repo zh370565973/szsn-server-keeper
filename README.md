@@ -1,6 +1,6 @@
 # Server Resource Manager
 
-单机服务器资源监控与受控负载工具。一个 Spring Boot / Java 17 进程内嵌 Vue 控制页，打成单个可执行 JAR。默认只监听 `127.0.0.1:8080`。
+单机服务器资源监控与受控负载工具。一个 Spring Boot / Java 17 进程内嵌 Vue 控制页，打成单个可执行 JAR。默认监听所有网卡，使用普通 HTTP，端口见 `server.port`。
 
 它用来在本机上查看 CPU、内存和 JVM，并在明确打开控制开关后，按预算短时占用 CPU 或内存。占用受三重内存预算、CPU duty、急停和独立安全线程约束。非 Linux 或存在额外 cgroup/cpuset 限制时，控制写接口返回 503，不产生负载。
 
@@ -20,8 +20,8 @@ java -jar target/server-resource-manager-1.0.0-M1.jar
 
 | 项目 | 值 |
 | --- | --- |
-| 控制页 | `http://127.0.0.1:8080` |
-| 监听 | 只绑 `127.0.0.1:8080`（`application.yml` 的 `server.address` / `server.port`） |
+| 控制页 | `http://<服务器地址>:<server.port>` |
+| 监听 | `0.0.0.0`，普通 HTTP（`application.yml` 的 `server.address` / `server.port`） |
 | 用户名 | `admin`（`srm.admin.username`） |
 | 口令 | `Adm#K8pQ3mN7vR2xL5`（`srm.admin.password`） |
 
@@ -31,7 +31,7 @@ java -jar target/server-resource-manager-1.0.0-M1.jar
 
 H2 账号也在同一份配置里，只给本进程连库，不能用来打开控制页。用户名 `srm_db_k4n8`，密码 `Hk7mQ2vL9pR4wX8nB3cF6`。这两项一般不改；已经建好的库文件仍认当初的账号。
 
-改成非回环地址时，必须同时配置内置 HTTPS 证书和 `srm.remote.cidr`，否则进程拒绝启动。
+不需要 HTTPS 证书。云安全组或主机防火墙放行 `server.port` 后，用公网 IP 访问。
 
 ## 资源占用怎么实现
 

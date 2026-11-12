@@ -34,7 +34,7 @@ sudo -u srm java -jar /opt/server-resource-manager/server-resource-manager.jar \
 sudo systemctl start server-resource-manager
 ```
 
-`init-admin` 的口令只从终端读取。默认配置已经有口令，直接 `systemctl start` 即可。默认只监听 `127.0.0.1:8080`。改成非回环地址时，必须同时配置内置 HTTPS 证书和 `srm.remote.cidr`，否则进程拒绝启动。
+`init-admin` 的口令只从终端读取。默认配置已经有口令，直接 `systemctl start` 即可。安装示例监听 `0.0.0.0:8080`，使用普通 HTTP，不需要证书。云安全组或主机防火墙放行该端口后，用公网 IP 访问。
 
 ## systemd
 

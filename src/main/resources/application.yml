@@ -1,11 +1,11 @@
-# 控制页默认只在本机打开：http://127.0.0.1:33121
+# 控制页使用普通 HTTP。监听 0.0.0.0 时，用服务器公网 IP 和端口打开。
 # 只有一个管理员。登录用户名和口令写在 srm.admin，一般不改。
 # srm.admin.password 非空时用它登录。留空才读取 password-file 里的 BCrypt。
 # spring.datasource 的用户名和密码是内嵌 H2 的，不能用来登录控制页。
 server:
-  # 只监听回环地址。改成非回环地址时，必须同时启用 server.ssl 并填写 srm.remote.cidr，否则拒绝启动。
-  address: 127.0.0.1
-  port: 33121
+  # 监听所有网卡，不启用 HTTPS。云安全组需放行下面的端口。
+  address: 0.0.0.0
+  port: 33122
   servlet:
     session:
       # 浏览器登录会话空闲超时。
@@ -60,7 +60,7 @@ srm:
     # 仅当上面的 password 留空时，init-admin 把 BCrypt 哈希写到这里。
     password-file: ${srm.data-dir}/admin.password
   remote:
-    # 非回环监听时允许访问的网段。留空表示不开放远程访问。
+    # 保留字段。当前不按网段拦截请求，来源限制用云安全组。
     cidr: ""
 
 logging:

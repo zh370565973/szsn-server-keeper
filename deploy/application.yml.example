@@ -1,7 +1,8 @@
 # install.sh 在配置文件不存在时复制本文件，并把 __PREFIX__、__ETC__、__DATA__、__LOG__ 换成实际目录。
 # 已存在的 application.yml 不会被覆盖。这些路径改完后要重启服务才生效。
 server:
-  address: 127.0.0.1
+  # 监听所有网卡，使用普通 HTTP。云安全组需放行下面的端口。
+  address: 0.0.0.0
   port: 8080
   servlet:
     session:
@@ -47,6 +48,7 @@ srm:
     # 仅当 password 留空时，init-admin 把 BCrypt 哈希写到这里。
     password-file: "${srm.data-dir}/admin.password"
   remote:
+    # 保留字段。当前不按网段拦截请求，来源限制用云安全组。
     cidr: ""
 
 logging:
