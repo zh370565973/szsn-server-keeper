@@ -5,6 +5,7 @@ import { api, explainError, type PageResult, type ScheduleItem, type TaskTemplat
 import { useTableBodyHeight } from '../fillHeight'
 import { epochFromLocal, toLocalInput } from '../format'
 import { nextFireText, scheduleTypeLabel, skipText, weekdayText } from '../labels'
+import { monitor } from '../monitor'
 
 const DAY = 24 * 60 * 60
 const LOCAL_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/
@@ -51,7 +52,7 @@ const columns = [
   { title: '模板', key: 'task' },
   { title: '类型', key: 'type', width: 100 },
   { title: '规则', key: 'rule' },
-  { title: '下次触发', key: 'next', width: 220 },
+  { title: '下次触发', key: 'next', width: 240 },
   { title: '最近跳过', key: 'skip', width: 280 },
   { title: '启停', key: 'enabled', width: 90 },
   { title: '操作', key: 'actions', width: 140 }
@@ -68,6 +69,24 @@ const pagination = computed(() => ({
 }))
 
 const selectedTemplate = computed(() => templates.value.find((item) => item.id === form.taskId))
+const admissionAlert = computed(() => {
+  const resource = monitor.resource
+  if (!resource) {
+    return ''
+  }
+  if (resource.emergencyLatched) {
+    return '急停已锁存。请先到系统解除锁存，再打开控制。解开之前，到点仍会跳过。'
+  }
+  if (resource.controlSwitch !== 'ON') {
+    return '控制开关当前关闭。已启用的计划到点会跳过，原因是「控制关闭或急停锁存，未启动」，且不会补跑。请到系统打开控制。'
+  }
+  return ''
+})
+const controlBlocksStart = computed(() => admissionAlert.value !== '')
+
+function fireWillSkip(item: ScheduleItem) {
+  return controlBlocksStart.value && item.enabled && item.nextFireAt != null
+}
 const intervalForCheck = computed(() =>
   form.type === 'FIXED_INTERVAL' && form.intervalSeconds != null && Number.isInteger(form.intervalSeconds)
     ? form.intervalSeconds
@@ -330,6 +349,12 @@ onMounted(() => {
         <a-button type="primary" @click="openCreate">创建计划</a-button>
       </div>
     </a-card>
+    <a-alert v-if="admissionAlert" type="warning" show-icon class="shrink">
+      <template #message>
+        <span>{{ admissionAlert }}</span>
+        <router-link class="alert-link" to="/settings">打开系统设置</router-link>
+      </template>
+    </a-alert>
     <a-alert v-if="templateTotal > templates.length" type="info" show-icon message="模板超过 100 个，下拉只含最近更新的 100 个。" />
     <a-alert v-if="templateError" type="error" show-icon :message="templateError" />
     <a-alert v-if="error" type="error" show-icon :message="error" />
@@ -341,7 +366,7 @@ onMounted(() => {
       :columns="columns"
       :data-source="items"
       :pagination="pagination"
-      :scroll="{ x: 1100, y: tableBodyHeight }"
+      :scroll="{ x: 1120, y: tableBodyHeight }"
       row-key="id"
       @change="onTableChange"
     >
@@ -349,7 +374,10 @@ onMounted(() => {
         <template v-if="column.key === 'task'">{{ taskName(record.taskId) }}</template>
         <template v-else-if="column.key === 'type'">{{ scheduleTypeLabel(record.type) }}</template>
         <template v-else-if="column.key === 'rule'">{{ ruleText(record) }}</template>
-        <template v-else-if="column.key === 'next'">{{ nextFireText(record.nextFireAt, record.enabled) }}</template>
+        <template v-else-if="column.key === 'next'">
+          <div>{{ nextFireText(record.nextFireAt, record.enabled) }}</div>
+          <div v-if="fireWillSkip(record)" class="fire-warn">到点仍会跳过</div>
+        </template>
         <template v-else-if="column.key === 'skip'">
           {{ skipText(record.lastSkipReason, record.lastSkipMissedCount, record.lastSkippedAt) }}
         </template>
@@ -439,3 +467,13 @@ onMounted(() => {
     </a-modal>
   </div>
 </template>
+
+<style scoped>
+.alert-link {
+  margin-left: 8px;
+}
+.fire-warn {
+  color: #d48806;
+  line-height: 1.4;
+}
+</style>
