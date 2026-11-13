@@ -71,19 +71,4 @@ H2 账号也在同一份配置里，只给本进程连库，不能用来打开�
 
 页面把负载持有、监控堆、监控进程驻留和负载进程驻留分开显示。百分比目标受预算卡住时显示目标受限，不会把目标悄悄改小再启动。
 
-## 当前进度
-
-制品版本仍是 `1.0.0-M1`，没有另立发版号。M0 到 M3 的开发项已经在 main 上：监控、登录、CPU 引擎、内存分块、联合控制、资源页和安全停机都已接入。
-
-- 公开启动在写入执行记录之前校验：时长 10 秒–7 天，CPU 和系统占用目标都是 1–90%。固定字节的旧任务仍须是 4MiB 的整数倍。不合法返回 422，不落库。
-- 生产内存路径使用按 4MiB 分块、逐页写入非零字节的 `byte[]` 分配器，增长不超过 32MiB/s，并受三重预算限制。暂停或停止只清除引用。单元测试仍注入假分配器。M3-06 已用普通 Linux 上 64MiB 上限的真实分配取证记为完成，不是麒麟上的 256MiB 全量。
-- 生产 CPU 路径使用 `ChecksumCpuBurner` 做真实计算。测试注入不自旋的燃烧器。
-- 不调用 `System.gc()`，也不把 RSS 下降当成内存已经还给系统。
-
-还没做的部分不要当成已完成：
-
-- M4（模板、计划、心跳）未开工。
-- 麒麟现场对照（M1-09 / AT-02）和长跑（M5-04）仍待验收。本次不要求麒麟机器。
-- M2-09 / AT-03 要求 8 核、基线 CPU 低于 10% 时对 30/40/60% 做五分钟观察。短时燃烧不能代替这项。
-
-更细的范围、进度和接口见 [PRD.md](PRD.md)、[TASKS.md](TASKS.md)、[docs/PROGRESS.md](docs/PROGRESS.md)、[docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)、[docs/openapi.yaml](docs/openapi.yaml) 和 [deploy/README.md](deploy/README.md)。
+部署、安装和接口见 [docs/DEPLOY.md](docs/DEPLOY.md)、[docs/openapi.yaml](docs/openapi.yaml) 和 [deploy/README.md](deploy/README.md)。
